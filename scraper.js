@@ -1,6 +1,6 @@
 /**
  * ==============================================================================
- * 🕷️ MÓDULO DE SCRAPING AUTÓNOMO 24/7 (MULTI-PÁGINA + FORMATO ORIGINAL)
+ * 🕷️ MÓDULO DE SCRAPING AUTÓNOMO 24/7 (MULTI-PÁGINA DINÁMICO + SELECTOR DE PÁGINAS)
  * ==============================================================================
  */
 
@@ -21,14 +21,17 @@ const URL_BASE_TARGET = 'https://altenens.is/forums/accounts-and-database-dumps.
 const MAX_CACHE_SIZE = 600;                  
 const TIEMPO_ESPERA_CICLO_MIN = 180000;      // 3 minutos mínimos
 const TIEMPO_ESPERA_CICLO_MAX = 300000;      // 5 minutos máximos
-const TOTAL_PAGINAS_A_ESCANEAR = 3;          // Cantidad de páginas del foro a recorrer en cada ciclo
+
+// CONFIGURACIÓN DE PÁGINAS A ESCANEAR POR DEFECTO (Puedes cambiarlo aquí o vía menú)
+let configuracionPaginas = 3; 
 
 let ultimoOffsetTelegram = 0;
 let estadoBot = {
     ciclosRealizados: 0,
     aportesEnviadosTotales: 0,
     ultimoEscaneo: "Esperando primer ciclo...",
-    inicioSistema: new Date().toLocaleString()
+    inicioSistema: new Date().toLocaleString(),
+    paginasObjetivo: configuracionPaginas
 };
 
 const esperar = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -98,7 +101,7 @@ async function iniciarSesion(page, user, pass) {
 }
 
 // ==============================================================================
-// 🎛️ PANEL INTERACTIVO (SIN BOTONES DE FORO EXTERNO)
+// 🎛️ PANEL INTERACTIVO VIP CON SELECTOR DE PÁGINAS (1, 2, 3...)
 // ==============================================================================
 async function escucharComandosTelegram(botToken) {
     try {
@@ -119,21 +122,34 @@ async function escucharComandosTelegram(botToken) {
                         const hilosVistos = (await cargarJSON(HILOS_VISTOS_PATH)) || [];
                         const msg = `📊 <b>ESTADO ACTUAL DEL BOT</b>\n\n` +
                                     `🟢 <b>Estado:</b> <code>Ejecutándose 24/7</code>\n` +
+                                    `📄 <b>Páginas escaneadas por ciclo:</b> <code>1 a ${estadoBot.paginasObjetivo}</code>\n` +
                                     `🔄 <b>Ciclos completados:</b> <code>${estadoBot.ciclosRealizados}</code>\n` +
                                     `📤 <b>Aportes enviados:</b> <code>${estadoBot.aportesEnviadosTotales}</code>\n` +
                                     `📦 <b>Hilos en caché:</b> <code>${hilosVistos.length}/${MAX_CACHE_SIZE}</code>\n` +
                                     `🕒 <b>Último escaneo:</b> <code>${estadoBot.ultimoEscaneo}</code>`;
                         
                         await editarMensajeMenu(botToken, chatId, messageId, msg);
+                    } else if (data === 'cmd_paginas') {
+                        const msg = `📑 <b>SELECTOR DE PROFUNDIDAD DE PÁGINAS</b>\n\n` +
+                                    `Actualmente el bot escanea hasta la <b>página ${configuracionPaginas}</b>.\n` +
+                                    `Selecciona cuántas páginas deseas barrer en cada ciclo:`;
+                        await editarMensajeSelectorPaginas(botToken, chatId, messageId, msg);
+                    } else if (data.startsWith('set_pag_')) {
+                        const nuevaPagina = parseInt(data.replace('set_pag_', ''));
+                        configuracionPaginas = nuevaPagina;
+                        estadoBot.paginasObjetivo = nuevaPagina;
+
+                        const msg = `✅ <b>¡Configuración actualizada!</b>\n\nAhora el bot escaneará desde la página 1 hasta la <b>página ${nuevaPagina}</b> en cada ciclo.`;
+                        await editarMensajeMenu(botToken, chatId, messageId, msg);
                     } else if (data === 'cmd_ayuda') {
                         const msg = `❓ <b>MENÚ DE AYUDA - YKZISWEB</b>\n\n` +
-                                    `Este bot rastrea de manera autónoma múltiples páginas del foro y reporta los hilos con formato numérico automáticamente.`;
+                                    `Este bot rastrea múltiples páginas del foro de forma autónoma, extrae los hilos que contienen tarjetas/datos numéricos y los envía a este grupo con sus respectivos <b>Replies</b> y fechas.`;
                         await editarMensajeMenu(botToken, chatId, messageId, msg);
                     }
                     
                     await axios.post(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
                         callback_query_id: update.callback_query.id,
-                        text: "Actualizado"
+                        text: "Actualizado con éxito"
                     }).catch(() => {});
                 }
 
@@ -142,7 +158,7 @@ async function escucharComandosTelegram(botToken) {
                     const texto = update.message.text.trim();
 
                     if (texto.startsWith('/menu') || texto.startsWith('/start')) {
-                        const menuText = `🕷️ <b>PANEL DE CONTROL - YKZISWEB BOT</b>\n\nSelecciona una opción:`;
+                        const menuText = `🕷️ <b>PANEL DE CONTROL - YKZISWEB BOT</b>\n\nSelecciona una opción del menú interactivo:`;
                         await enviarMensajeMenu(botToken, chatId, menuText);
                     }
                 }
@@ -157,6 +173,9 @@ async function enviarMensajeMenu(botToken, chatId, texto) {
             inline_keyboard: [
                 [
                     { text: "📊 Ver Estado", callback_data: "cmd_estado" },
+                    { text: "📑 Cambiar Páginas (1-5)", callback_data: "cmd_paginas" }
+                ],
+                [
                     { text: "❓ Ayuda", callback_data: "cmd_ayuda" }
                 ]
             ]
@@ -177,6 +196,9 @@ async function editarMensajeMenu(botToken, chatId, messageId, texto) {
             inline_keyboard: [
                 [
                     { text: "📊 Ver Estado", callback_data: "cmd_estado" },
+                    { text: "📑 Cambiar Páginas (1-5)", callback_data: "cmd_paginas" }
+                ],
+                [
                     { text: "❓ Ayuda", callback_data: "cmd_ayuda" }
                 ]
             ]
@@ -192,8 +214,37 @@ async function editarMensajeMenu(botToken, chatId, messageId, texto) {
     }).catch(() => {});
 }
 
+async function editarMensajeSelectorPaginas(botToken, chatId, messageId, texto) {
+    const teclado = {
+        reply_markup: {
+            inline_keyboard: [
+                [
+                    { text: "📄 Página 1", callback_data: "set_pag_1" },
+                    { text: "📄 Página 2", callback_data: "set_pag_2" },
+                    { text: "📄 Página 3", callback_data: "set_pag_3" }
+                ],
+                [
+                    { text: "📄 Página 4", callback_data: "set_pag_4" },
+                    { text: "📄 Página 5", callback_data: "set_pag_5" }
+                ],
+                [
+                    { text: "⬅️ Volver al Menú", callback_data: "cmd_estado" }
+                ]
+            ]
+        }
+    };
+
+    await axios.post(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+        chat_id: chatId,
+        message_id: messageId,
+        text: texto,
+        parse_mode: 'HTML',
+        ...teclado
+    }).catch(() => {});
+}
+
 // ==============================================================================
-// 🔄 CICLO PRINCIPAL DE SCRAPING MULTI-PÁGINA
+// 🔄 CICLO PRINCIPAL DE SCRAPING MULTI-PÁGINA CON RECONOCIMIENTO DE REPLIES
 // ==============================================================================
 async function revisarWebYEnviar() {
     const user = process.env.FORUM_USER;
@@ -225,10 +276,10 @@ async function revisarWebYEnviar() {
 
             let hilosTotales = [];
 
-            // RECORRER MULTIPLES PÁGINAS DEL FORO
-            for (let numPagina = 1; numPagina <= TOTAL_PAGINAS_A_ESCANEAR; numPagina++) {
+            // RECORRER LAS PÁGINAS CONFIGURADAS DINÁMICAMENTE (1 hasta configuracionPaginas)
+            for (let numPagina = 1; numPagina <= configuracionPaginas; numPagina++) {
                 const urlPagina = numPagina === 1 ? URL_BASE_TARGET : `${URL_BASE_TARGET}page-${numPagina}`;
-                console.log(`[ykzisweb] Analizando página ${numPagina}: ${urlPagina}`);
+                console.log(`[ykzisweb] Analizando cartelera - Página ${numPagina}: ${urlPagina}`);
                 
                 await page.goto(urlPagina, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
 
@@ -244,10 +295,22 @@ async function revisarWebYEnviar() {
                         let repliesCount = "0";
                         const structItem = item.closest('div.structItem') || item;
                         
+                        // Extracción exacta basada en la estructura XenForo de replies
                         const metaCell = structItem.querySelector('div.structItem-cell.structItem-cell--meta');
                         if (metaCell) {
-                            const matchText = metaCell.innerText.match(/Replies:\s*(\d+)/i);
-                            if (matchText && matchText[1]) repliesCount = matchText[1];
+                            const dlElements = metaCell.querySelectorAll('dl.pairs');
+                            dlElements.forEach(dl => {
+                                const dt = dl.querySelector('dt');
+                                const dd = dl.querySelector('dd');
+                                if (dt && dt.innerText.toLowerCase().includes('replies')) {
+                                    if (dd) repliesCount = dd.innerText.trim();
+                                }
+                            });
+                            
+                            if (repliesCount === "0") {
+                                const matchText = metaCell.innerText.match(/Replies:\s*(\d+)/i);
+                                if (matchText && matchText[1]) repliesCount = matchText[1];
+                            }
                         }
 
                         if (!titleLink || !titleLink.getAttribute('href')) return null;
@@ -267,7 +330,7 @@ async function revisarWebYEnviar() {
             }
 
             const hilosUnicos = Array.from(new Map(hilosTotales.map(h => [h.link, h])).values());
-            console.log(`[ykzisweb] Total de hilos únicos recolectados en las ${TOTAL_PAGINAS_A_ESCANEAR} páginas: ${hilosUnicos.length}`);
+            console.log(`[ykzisweb] Total de hilos únicos recolectados (Páginas 1 a ${configuracionPaginas}): ${hilosUnicos.length}`);
 
             let hilosVistos = (await cargarJSON(HILOS_VISTOS_PATH)) || [];
             let contadorEnviados = 0;
@@ -297,7 +360,7 @@ async function revisarWebYEnviar() {
 
                                 const badgeFrescura = parseInt(hilo.replies) <= 2 ? " 🔥 [Fresco / Sin vistas]" : "";
 
-                                // FORMATO ORIGINAL SOLICITADO (SIN BOTONES EXTRA)
+                                // FORMATO ORIGINAL CON REPLIES Y FECHA
                                 const mensajeTelegram = `🕷️ <b>[ykzisweb]</b>${badgeFrescura}\n\n` +
                                                         `<code>${contenidoFinal}</code>\n\n` +
                                                         `🕒 <b>Fecha:</b> ${hilo.hora}\n` +
@@ -314,7 +377,7 @@ async function revisarWebYEnviar() {
 
                                 contadorEnviados++;
                                 estadoBot.aportesEnviadosTotales++;
-                                console.log(`[ykzisweb][Éxito] Aporte enviado al canal principal.`);
+                                console.log(`[ykzisweb][Éxito] Aporte enviado al canal principal con ${hilo.replies} replies.`);
                                 await esperar(tiempoAleatorio(3500, 5000));
                             }
                         }
