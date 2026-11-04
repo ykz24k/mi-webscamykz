@@ -9,5 +9,5 @@ http.createServer((req, res) => {
     console.log(`🌐 Servidor HTTP fantasma escuchando en el puerto ${PORT}`);
 });
 
-// Importamos y arrancamos el gestor del scraper
-require('./test_real_5.js');
+// Importamos el archivo de prueba/gestión real que ya tienes en la carpeta
+require('./test_real.js');
