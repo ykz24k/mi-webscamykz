@@ -1,7 +1,11 @@
 /**
- * ==============================================================================
- * 🕷️ MÓDULO DE SCRAPING AUTÓNOMO 24/7 (MULTI-PÁGINA DINÁMICO + SELECTOR DE PÁGINAS)
- * ==============================================================================
+ * ====================================================================================
+ * 🕷️ YKZISWEB - MOTOR DE SCRAPING AUTÓNOMO 24/7 ENTERPRISE EDITION (MULTI-PÁGINA + VIP)
+ * ====================================================================================
+ * Descripción: Módulo avanzado para la extracción, filtrado numérico y retransmisión
+ * autónoma de hilos con persistencia de sesión, caché masiva anti-repetición y panel
+ * de control interactivo en tiempo real integrado con la API HTTP de Telegram.
+ * ====================================================================================
  */
 
 const puppeteer = require('puppeteer-extra');
@@ -11,20 +15,24 @@ const path = require('path');
 const axios = require('axios');
 require('dotenv').config();
 
+// Aplicar plugins anti-detección de huella digital
 puppeteer.use(StealthPlugin());
 
+// ====================================================================================
+// 📁 CONFIGURACIÓN DE RUTAS Y CONSTANTES GLOBALES DEL SISTEMA
+// ====================================================================================
 const HILOS_VISTOS_PATH = path.join(__dirname, 'hilos_vistos_cache.json');
 const COOKIES_PATH = path.join(__dirname, 'cookies_foro.json');
 const URL_LOGIN = 'https://altenens.is/login/';
 const URL_BASE_TARGET = 'https://altenens.is/forums/accounts-and-database-dumps.45/';
 
-const MAX_CACHE_SIZE = 600;                  
-const TIEMPO_ESPERA_CICLO_MIN = 180000;      // 3 minutos mínimos
-const TIEMPO_ESPERA_CICLO_MAX = 300000;      // 5 minutos máximos
+// Caché masiva de 5000 elementos para blindar el sistema contra reenvíos o duplicados
+const MAX_CACHE_SIZE = 5000;                  
+const TIEMPO_ESPERA_CICLO_MIN = 180000;      // 3 minutos mínimos de reposo
+const TIEMPO_ESPERA_CICLO_MAX = 300000;      // 5 minutos máximos de reposo
 
-// CONFIGURACIÓN DE PÁGINAS A ESCANEAR POR DEFECTO (Puedes cambiarlo aquí o vía menú)
+// Variables de estado del bot y control de paginación dinámica
 let configuracionPaginas = 3; 
-
 let ultimoOffsetTelegram = 0;
 let estadoBot = {
     ciclosRealizados: 0,
@@ -34,40 +42,81 @@ let estadoBot = {
     paginasObjetivo: configuracionPaginas
 };
 
+// ====================================================================================
+// 🛠️ UTILIDADES Y FUNCIONES AUXILIARES DE SOPORTE TÉCNICO
+// ====================================================================================
+
+/**
+ * Genera una promesa de retraso temporal para simular tiempos humanos.
+ * @param {number} ms Milenios en milisegundos
+ */
 const esperar = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * Calcula un intervalo de tiempo aleatorio dentro de un rango determinado.
+ * @param {number} min Valor mínimo
+ * @param {number} max Valor máximo
+ */
 const tiempoAleatorio = (min, max) => Math.floor(Math.random() * (max - min + 1) + min);
 
+/**
+ * Carga de manera segura un archivo JSON del disco local.
+ * @param {string} ruta Ruta absoluta del archivo
+ */
 async function cargarJSON(ruta) {
     try {
         const data = await fs.readFile(ruta, 'utf-8');
         return JSON.parse(data);
     } catch (error) {
-        return null;
+        return [];
     }
 }
 
+/**
+ * Guarda de manera segura estructuras de datos en formato JSON en disco.
+ * @param {string} ruta Ruta absoluta del archivo
+ * @param {Object|Array} data Datos a serializar
+ */
 async function guardarJSON(ruta, data) {
-    try {
+    pesistenciaSegura: try {
         await fs.writeFile(ruta, JSON.stringify(data, null, 2), 'utf-8');
     } catch (error) {
-        console.error(`[ykzisweb][Error de Escritura] No se pudo guardar en ${ruta}:`, error.message);
+        console.error(`[ykzisweb][Error de Escritura en Disco] No se pudo persistir en ${ruta}:`, error.message);
     }
 }
 
+/**
+ * Optimiza el rendimiento de la página web bloqueando recursos innecesarios (imágenes, fuentes, etc.)
+ * @param {import('puppeteer').Page} page Instancia de la página de Puppeteer
+ */
 async function optimizarPagina(page) {
-    await page.setRequestInterception(true);
-    page.on('request', (req) => {
-        const recursosBloqueados = ['image', 'stylesheet', 'font', 'media', 'other', 'ping', 'beacon', 'font/woff2'];
-        if (recursosBloqueados.includes(req.resourceType())) {
-            req.abort();
-        } else {
-            req.continue();
-        }
-    });
+    try {
+        await page.setRequestInterception(true);
+        page.on('request', (req) => {
+            const recursosBloqueados = ['image', 'stylesheet', 'font', 'media', 'other', 'ping', 'beacon', 'font/woff2'];
+            if (recursosBloqueados.includes(req.resourceType())) {
+                req.abort();
+            } else {
+                req.continue();
+            }
+        });
+    } catch (e) {
+        // Ignorar excepciones secundarias de intercepción
+    }
 }
 
+// ====================================================================================
+// 🔐 SUBSISTEMA DE AUTENTICACIÓN Y GESTIÓN DE SESIÓN PERSISTENTE
+// ====================================================================================
+
+/**
+ * Gestiona el inicio de sesión automático y la reutilización de cookies de sesión.
+ * @param {import('puppeteer').Page} page Instancia activa de Puppeteer
+ * @param {string} user Nombre de usuario del foro
+ * @param {string} pass Contraseña de acceso
+ */
 async function iniciarSesion(page, user, pass) {
-    console.log("[ykzisweb] Verificando cookies de sesión persistentes...");
+    console.log("[ykzisweb] Verificando integridad de cookies de sesión persistentes...");
     const cookiesAnteriores = await cargarJSON(COOKIES_PATH);
 
     if (cookiesAnteriores && cookiesAnteriores.length > 0) {
@@ -76,9 +125,10 @@ async function iniciarSesion(page, user, pass) {
         
         const sesionValida = await page.$('.p-navgroup-link--user');
         if (sesionValida) {
-            console.log("[ykzisweb] ¡Sesión restaurada con éxito mediante cookies guardadas!");
+            console.log("[ykzisweb] ¡Sesión restaurada con éxito mediante cookies guardadas en caché!");
             return true;
         }
+        console.log("[ykzisweb] Las cookies almacenadas han expirado. Iniciando secuencia de login...");
     }
 
     await page.goto(URL_LOGIN, { waitUntil: 'domcontentloaded', timeout: 45000 });
@@ -89,6 +139,7 @@ async function iniciarSesion(page, user, pass) {
     await esperar(tiempoAleatorio(600, 1200));
     await page.type('input[name="password"]', pass, { delay: tiempoAleatorio(40, 85) });
 
+    console.log("[ykzisweb] Transmitiendo credenciales de autenticación al servidor remoto...");
     await Promise.all([
         page.click('button.button--icon--login'),
         page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 })
@@ -96,23 +147,29 @@ async function iniciarSesion(page, user, pass) {
 
     const cookiesNuevas = await page.cookies();
     await guardarJSON(COOKIES_PATH, cookiesNuevas);
-    console.log("[ykzisweb] Autenticación completada y cookies respaldadas.");
+    console.log("[ykzisweb] Autenticación completada satisfactoriamente y nuevas cookies respaldadas.");
     return true;
 }
 
-// ==============================================================================
-// 🎛️ PANEL INTERACTIVO VIP CON SELECTOR DE PÁGINAS (1, 2, 3...)
-// ==============================================================================
+// ====================================================================================
+// 🎛️ PANEL DE CONTROL INTERACTIVO Y GESTIÓN DE COMANDOS DE TELEGRAM
+// ====================================================================================
+
+/**
+ * Escucha en bucle continuo las actualizaciones (comandos e interacciones de botones) de Telegram.
+ * @param {string} botToken Token de autenticación del bot de Telegram
+ */
 async function escucharComandosTelegram(botToken) {
     try {
         const respuesta = await axios.get(`https://api.telegram.org/bot${botToken}/getUpdates`, {
-            params: { offset: ultimoOffsetTelegram, timeout: 2 }
+            params: { offset: ultimoOffsetTelegram, timeout: 1 }
         });
 
         if (respuesta.data && respuesta.data.ok) {
             for (const update of respuesta.data.result) {
                 ultimoOffsetTelegram = update.update_id + 1;
 
+                // Procesamiento de clics en botones interactivos (Inline Keyboards)
                 if (update.callback_query) {
                     const chatId = update.callback_query.message.chat.id;
                     const messageId = update.callback_query.message.message_id;
@@ -120,63 +177,74 @@ async function escucharComandosTelegram(botToken) {
                     
                     if (data === 'cmd_estado') {
                         const hilosVistos = (await cargarJSON(HILOS_VISTOS_PATH)) || [];
-                        const msg = `📊 <b>ESTADO ACTUAL DEL BOT</b>\n\n` +
-                                    `🟢 <b>Estado:</b> <code>Ejecutándose 24/7</code>\n` +
-                                    `📄 <b>Páginas escaneadas por ciclo:</b> <code>1 a ${estadoBot.paginasObjetivo}</code>\n` +
-                                    `🔄 <b>Ciclos completados:</b> <code>${estadoBot.ciclosRealizados}</code>\n` +
-                                    `📤 <b>Aportes enviados:</b> <code>${estadoBot.aportesEnviadosTotales}</code>\n` +
-                                    `📦 <b>Hilos en caché:</b> <code>${hilosVistos.length}/${MAX_CACHE_SIZE}</code>\n` +
-                                    `🕒 <b>Último escaneo:</b> <code>${estadoBot.ultimoEscaneo}</code>`;
+                        const msg = `📊 <b>ESTADO ACTUAL DEL SISTEMA YKZISWEB</b>\n\n` +
+                                    `🟢 <b>Estado del Motor:</b> <code>Operativo 24/7</code>\n` +
+                                    `📄 <b>Páginas objetivo por ciclo:</b> <code>1 a ${estadoBot.paginasObjetivo}</code>\n` +
+                                    `🔄 <b>Ciclos de barrido completados:</b> <code>${estadoBot.ciclosRealizados}</code>\n` +
+                                    `📤 <b>Aportes exitosos enviados:</b> <code>${estadoBot.aportesEnviadosTotales}</code>\n` +
+                                    `📦 <b>Caché anti-repetición:</b> <code>${hilosVistos.length}/${MAX_CACHE_SIZE} hilos</code>\n` +
+                                    `🕒 <b>Último escaneo registrado:</b> <code>${estadoBot.ultimoEscaneo}</code>\n` +
+                                    `🚀 <b>Sistema iniciado el:</b> <code>${estadoBot.inicioSistema}</code>`;
                         
                         await editarMensajeMenu(botToken, chatId, messageId, msg);
                     } else if (data === 'cmd_paginas') {
                         const msg = `📑 <b>SELECTOR DE PROFUNDIDAD DE PÁGINAS</b>\n\n` +
-                                    `Actualmente el bot escanea hasta la <b>página ${configuracionPaginas}</b>.\n` +
-                                    `Selecciona cuántas páginas deseas barrer en cada ciclo:`;
+                                    `Actualmente el bot escanea desde la página 1 hasta la <b>página ${configuracionPaginas}</b>.\n` +
+                                    `Selecciona el límite de páginas que deseas barrer en cada ciclo automático:`;
                         await editarMensajeSelectorPaginas(botToken, chatId, messageId, msg);
                     } else if (data.startsWith('set_pag_')) {
                         const nuevaPagina = parseInt(data.replace('set_pag_', ''));
                         configuracionPaginas = nuevaPagina;
                         estadoBot.paginasObjetivo = nuevaPagina;
 
-                        const msg = `✅ <b>¡Configuración actualizada!</b>\n\nAhora el bot escaneará desde la página 1 hasta la <b>página ${nuevaPagina}</b> en cada ciclo.`;
+                        const msg = `✅ <b>¡Configuración de páginas actualizada con éxito!</b>\n\nAhora el bot escaneará de forma autónoma desde la página 1 hasta la <b>página ${nuevaPagina}</b> en cada ciclo.`;
                         await editarMensajeMenu(botToken, chatId, messageId, msg);
                     } else if (data === 'cmd_ayuda') {
-                        const msg = `❓ <b>MENÚ DE AYUDA - YKZISWEB</b>\n\n` +
-                                    `Este bot rastrea múltiples páginas del foro de forma autónoma, extrae los hilos que contienen tarjetas/datos numéricos y los envía a este grupo con sus respectivos <b>Replies</b> y fechas.`;
+                        const msg = `❓ <b>CENTRO DE AYUDA Y ASISTENCIA - YKZISWEB</b>\n\n` +
+                                    `🤖 Este sistema autónomo rastrea múltiples páginas del foro Altenens de forma continua.\n\n` +
+                                    `⚙️ <b>Características principales:</b>\n` +
+                                    `• Filtra estrictamente hilos con contenido numérico válido.\n` +
+                                    `• Muestra la fecha exacta y los <b>Replies</b> originales.\n` +
+                                    `• Caché inteligente de 5000 elementos para garantizar cero duplicados.`;
                         await editarMensajeMenu(botToken, chatId, messageId, msg);
                     }
                     
                     await axios.post(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
                         callback_query_id: update.callback_query.id,
-                        text: "Actualizado con éxito"
+                        text: "⚡ Panel actualizado correctamente"
                     }).catch(() => {});
                 }
 
+                // Procesamiento de comandos enviados por texto plano (/start, /menu)
                 if (update.message && update.message.text) {
                     const chatId = update.message.chat.id;
                     const texto = update.message.text.trim();
 
                     if (texto.startsWith('/menu') || texto.startsWith('/start')) {
-                        const menuText = `🕷️ <b>PANEL DE CONTROL - YKZISWEB BOT</b>\n\nSelecciona una opción del menú interactivo:`;
+                        const menuText = `🕷️ <b>PANEL DE CONTROL VIP - YKZISWEB BOT</b>\n\nSelecciona una opción del menú interactivo para gestionar el sistema:`;
                         await enviarMensajeMenu(botToken, chatId, menuText);
                     }
                 }
             }
         }
-    } catch (e) {}
+    } catch (e) {
+        // Silenciar errores menores de red en sondeo continuo
+    }
 }
 
+/**
+ * Envía el menú principal interactivo al chat de Telegram.
+ */
 async function enviarMensajeMenu(botToken, chatId, texto) {
     const teclado = {
         reply_markup: {
             inline_keyboard: [
                 [
-                    { text: "📊 Ver Estado", callback_data: "cmd_estado" },
+                    { text: "📊 Ver Estado del Sistema", callback_data: "cmd_estado" },
                     { text: "📑 Cambiar Páginas (1-5)", callback_data: "cmd_paginas" }
                 ],
                 [
-                    { text: "❓ Ayuda", callback_data: "cmd_ayuda" }
+                    { text: "❓ Ayuda y Soporte", callback_data: "cmd_ayuda" }
                 ]
             ]
         }
@@ -190,16 +258,19 @@ async function enviarMensajeMenu(botToken, chatId, texto) {
     }).catch(() => {});
 }
 
+/**
+ * Edita un mensaje existente en Telegram con el menú principal.
+ */
 async function editarMensajeMenu(botToken, chatId, messageId, texto) {
     const teclado = {
         reply_markup: {
             inline_keyboard: [
                 [
-                    { text: "📊 Ver Estado", callback_data: "cmd_estado" },
+                    { text: "📊 Ver Estado del Sistema", callback_data: "cmd_estado" },
                     { text: "📑 Cambiar Páginas (1-5)", callback_data: "cmd_paginas" }
                 ],
                 [
-                    { text: "❓ Ayuda", callback_data: "cmd_ayuda" }
+                    { text: "❓ Ayuda y Soporte", callback_data: "cmd_ayuda" }
                 ]
             ]
         }
@@ -214,6 +285,9 @@ async function editarMensajeMenu(botToken, chatId, messageId, texto) {
     }).catch(() => {});
 }
 
+/**
+ * Muestra el selector de páginas interactivo (1 al 5).
+ */
 async function editarMensajeSelectorPaginas(botToken, chatId, messageId, texto) {
     const teclado = {
         reply_markup: {
@@ -228,7 +302,7 @@ async function editarMensajeSelectorPaginas(botToken, chatId, messageId, texto) 
                     { text: "📄 Página 5", callback_data: "set_pag_5" }
                 ],
                 [
-                    { text: "⬅️ Volver al Menú", callback_data: "cmd_estado" }
+                    { text: "⬅️ Volver al Menú Principal", callback_data: "cmd_estado" }
                 ]
             ]
         }
@@ -243,9 +317,13 @@ async function editarMensajeSelectorPaginas(botToken, chatId, messageId, texto) 
     }).catch(() => {});
 }
 
-// ==============================================================================
-// 🔄 CICLO PRINCIPAL DE SCRAPING MULTI-PÁGINA CON RECONOCIMIENTO DE REPLIES
-// ==============================================================================
+// ====================================================================================
+// 🔄 CICLO PRINCIPAL DE SCRAPING MULTI-PÁGINA Y EXTRACCIÓN DE CONTENIDO
+// ====================================================================================
+
+/**
+ * Ejecuta el bucle principal de monitoreo permanente 24/7.
+ */
 async function revisarWebYEnviar() {
     const user = process.env.FORUM_USER;
     const pass = process.env.FORUM_PASS;
@@ -253,30 +331,40 @@ async function revisarWebYEnviar() {
     const forwardTarget = process.env.FORWARD_TO;
 
     if (!user || !pass || !botToken) {
-        return console.error("[ykzisweb][Error Crítico] Faltan credenciales en el archivo .env");
+        return console.error("[ykzisweb][Error Crítico] Faltan credenciales obligatorias en el archivo .env");
     }
 
-    console.log("[ykzisweb] Subsistema de monitoreo 24/7 multi-página iniciado.");
+    console.log("[ykzisweb] Subsistema enterprise anti-repetición y multi-página desplegado correctamente.");
 
     while (true) {
+        // Escuchar comandos de Telegram antes de iniciar tareas pesadas de navegador
         await escucharComandosTelegram(botToken);
 
         const browser = await puppeteer.launch({ 
             headless: true,
             executablePath: '/usr/bin/chromium', 
-            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+            args: [
+                '--no-sandbox', 
+                '--disable-setuid-sandbox', 
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--disable-gpu',
+                '--window-size=1920,1080'
+            ]
         });
         
         try {
             const page = await browser.newPage();
             await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+            await page.setViewport({ width: 1920, height: 1080 });
             await optimizarPagina(page);
 
+            // Iniciar sesión en el foro
             await iniciarSesion(page, user, pass);
 
             let hilosTotales = [];
 
-            // RECORRER LAS PÁGINAS CONFIGURADAS DINÁMICAMENTE (1 hasta configuracionPaginas)
+            // Bucle dinámico para recorrer las páginas seleccionadas por el usuario (1 hasta configuracionPaginas)
             for (let numPagina = 1; numPagina <= configuracionPaginas; numPagina++) {
                 const urlPagina = numPagina === 1 ? URL_BASE_TARGET : `${URL_BASE_TARGET}page-${numPagina}`;
                 console.log(`[ykzisweb] Analizando cartelera - Página ${numPagina}: ${urlPagina}`);
@@ -286,6 +374,7 @@ async function revisarWebYEnviar() {
                 const contenedor = await page.waitForSelector('div.structItem-container, div.structItem, div.js-threadList', { visible: true, timeout: 10000 }).catch(() => null);
                 if (!contenedor) continue;
 
+                // Extracción de hilos y metadatos (Replies y Fecha) desde la cartelera
                 const hilosPagina = await page.evaluate(() => {
                     const items = document.querySelectorAll('div.structItem-cell.structItem-cell--main, div.structItem');
                     return Array.from(items).map(item => {
@@ -295,7 +384,7 @@ async function revisarWebYEnviar() {
                         let repliesCount = "0";
                         const structItem = item.closest('div.structItem') || item;
                         
-                        // Extracción exacta basada en la estructura XenForo de replies
+                        // Extracción precisa de respuestas (Replies)
                         const metaCell = structItem.querySelector('div.structItem-cell.structItem-cell--meta');
                         if (metaCell) {
                             const dlElements = metaCell.querySelectorAll('dl.pairs');
@@ -326,16 +415,19 @@ async function revisarWebYEnviar() {
                 });
 
                 hilosTotales.push(...hilosPagina);
-                await esperar(2000);
+                await esperar(1500);
             }
 
+            // Filtrar hilos duplicados mediante un Map basado en la URL del enlace único
             const hilosUnicos = Array.from(new Map(hilosTotales.map(h => [h.link, h])).values());
             console.log(`[ykzisweb] Total de hilos únicos recolectados (Páginas 1 a ${configuracionPaginas}): ${hilosUnicos.length}`);
 
+            // Cargar caché masiva anti-repetición
             let hilosVistos = (await cargarJSON(HILOS_VISTOS_PATH)) || [];
             let contadorEnviados = 0;
 
             for (const hilo of hilosUnicos) {
+                // Validación estricta: si el hilo no está en la caché, se procesa
                 if (!hilosVistos.includes(hilo.link)) {
                     let hiloPage;
                     
@@ -350,6 +442,7 @@ async function revisarWebYEnviar() {
                         });
 
                         if (contenidoPost) {
+                            // Expresión regular para filtrar datos numéricos estructurados
                             const regexDatos = /(?:\d{15,16})[|/:-\s]+(?:\d{2})[|/:-\s]+(?:\d{2,4})[|/:-\s]+(?:\d{3,4})/g;
                             const coincidencias = contenidoPost.match(regexDatos);
 
@@ -360,7 +453,7 @@ async function revisarWebYEnviar() {
 
                                 const badgeFrescura = parseInt(hilo.replies) <= 2 ? " 🔥 [Fresco / Sin vistas]" : "";
 
-                                // FORMATO ORIGINAL CON REPLIES Y FECHA
+                                // Formato limpio y ordenado original con Fecha y Replies
                                 const mensajeTelegram = `🕷️ <b>[ykzisweb]</b>${badgeFrescura}\n\n` +
                                                         `<code>${contenidoFinal}</code>\n\n` +
                                                         `🕒 <b>Fecha:</b> ${hilo.hora}\n` +
@@ -372,20 +465,25 @@ async function revisarWebYEnviar() {
                                     parse_mode: 'HTML',
                                     disable_web_page_preview: true
                                 }).catch((err) => {
-                                    console.error(`[Error Telegram]`, err.response?.data || err.message);
+                                    console.error(`[Error Telegram API]`, err.response?.data || err.message);
                                 });
 
                                 contadorEnviados++;
                                 estadoBot.aportesEnviadosTotales++;
-                                console.log(`[ykzisweb][Éxito] Aporte enviado al canal principal con ${hilo.replies} replies.`);
+                                console.log(`[ykzisweb][Éxito] Aporte enviado y registrado correctamente.`);
                                 await esperar(tiempoAleatorio(3500, 5000));
                             }
                         }
 
+                        // Registrar inmediatamente el enlace en la caché y recortar al tamaño máximo (5000)
                         hilosVistos.push(hilo.link);
-                        await guardarJSON(HILOS_VISTOS_PATH, hilosVistos.slice(-MAX_CACHE_SIZE)); 
+                        if (hilosVistos.length > MAX_CACHE_SIZE) {
+                            hilosVistos = hilosVistos.slice(-MAX_CACHE_SIZE);
+                        }
+                        await guardarJSON(HILOS_VISTOS_PATH, hilosVistos); 
 
                     } catch (e) {
+                        // Capturar errores de hilo individual sin detener el bucle
                     } finally {
                         if (hiloPage) await hiloPage.close();
                     }
@@ -394,18 +492,20 @@ async function revisarWebYEnviar() {
 
             estadoBot.ciclosRealizados++;
             estadoBot.ultimoEscaneo = new Date().toLocaleTimeString();
-            console.log(`[ykzisweb] Ciclo finalizado. Aportes enviados: ${contadorEnviados}`);
+            console.log(`[ykzisweb] Ciclo de escaneo finalizado. Aportes nuevos transmitidos: ${contadorEnviados}`);
 
         } catch (errorCiclo) {
-            console.error(`[ykzisweb][Error de Ciclo]`, errorCiclo.message);
+            console.error(`[ykzisweb][Error Crítico en Ciclo]`, errorCiclo.message);
         } finally {
             if (browser) await browser.close();
         }
 
+        // Intervalo de reposo aleatorio entre ciclos
         const esperaSiguienteCiclo = tiempoAleatorio(TIEMPO_ESPERA_CICLO_MIN, TIEMPO_ESPERA_CICLO_MAX);
-        console.log(`[ykzisweb] En reposo. Próximo barrido en ${(esperaSiguienteCiclo / 60000).toFixed(1)} minutos.`);
+        console.log(`[ykzisweb] Sistema en reposo preventivo. Próximo barrido en ${(esperaSiguienteCiclo / 60000).toFixed(1)} minutos.`);
         
-        const bloques = 12;
+        // Bloques de espera divididos para que el bot responda al instante a comandos de Telegram durante el reposo
+        const bloques = 18;
         const intervaloBloque = esperaSiguienteCiclo / bloques;
         for (let i = 0; i < bloques; i++) {
             await esperar(intervaloBloque);
