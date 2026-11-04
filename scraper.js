@@ -48,7 +48,7 @@ let estadoBot = {
 
 /**
  * Genera una promesa de retraso temporal para simular tiempos humanos.
- * @param {number} ms Milenios en milisegundos
+ * @param {number} ms Milisegundos de espera
  */
 const esperar = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -78,7 +78,7 @@ async function cargarJSON(ruta) {
  * @param {Object|Array} data Datos a serializar
  */
 async function guardarJSON(ruta, data) {
-    pesistenciaSegura: try {
+    try {
         await fs.writeFile(ruta, JSON.stringify(data, null, 2), 'utf-8');
     } catch (error) {
         console.error(`[ykzisweb][Error de Escritura en Disco] No se pudo persistir en ${ruta}:`, error.message);
@@ -169,6 +169,20 @@ async function escucharComandosTelegram(botToken) {
             for (const update of respuesta.data.result) {
                 ultimoOffsetTelegram = update.update_id + 1;
 
+                // Procesamiento de comandos enviados por texto plano (/start, /menu)
+                if (update.message && update.message.text) {
+                    const chatId = update.message.chat.id;
+                    const textoCrudo = update.message.text.trim().toLowerCase();
+                    const texto = textoCrudo.split('@')[0];
+
+                    console.log(`[Telegram] Mensaje detectado en chat ${chatId}: "${textoCrudo}"`);
+
+                    if (texto === '/menu' || texto === '/start') {
+                        const menuText = `🕷️ <b>PANEL DE CONTROL VIP - YKZISWEB BOT</b>\n\nSelecciona una opción del menú interactivo para gestionar el sistema:`;
+                        await enviarMensajeMenu(botToken, chatId, menuText);
+                    }
+                }
+
                 // Procesamiento de clics en botones interactivos (Inline Keyboards)
                 if (update.callback_query) {
                     const chatId = update.callback_query.message.chat.id;
@@ -213,17 +227,6 @@ async function escucharComandosTelegram(botToken) {
                         callback_query_id: update.callback_query.id,
                         text: "⚡ Panel actualizado correctamente"
                     }).catch(() => {});
-                }
-
-                // Procesamiento de comandos enviados por texto plano (/start, /menu)
-                if (update.message && update.message.text) {
-                    const chatId = update.message.chat.id;
-                    const texto = update.message.text.trim();
-
-                    if (texto.startsWith('/menu') || texto.startsWith('/start')) {
-                        const menuText = `🕷️ <b>PANEL DE CONTROL VIP - YKZISWEB BOT</b>\n\nSelecciona una opción del menú interactivo para gestionar el sistema:`;
-                        await enviarMensajeMenu(botToken, chatId, menuText);
-                    }
                 }
             }
         }
@@ -504,12 +507,11 @@ async function revisarWebYEnviar() {
         const esperaSiguienteCiclo = tiempoAleatorio(TIEMPO_ESPERA_CICLO_MIN, TIEMPO_ESPERA_CICLO_MAX);
         console.log(`[ykzisweb] Sistema en reposo preventivo. Próximo barrido en ${(esperaSiguienteCiclo / 60000).toFixed(1)} minutos.`);
         
-        // Bloques de espera divididos para que el bot responda al instante a comandos de Telegram durante el reposo
-        const bloques = 18;
-        const intervaloBloque = esperaSiguienteCiclo / bloques;
-        for (let i = 0; i < bloques; i++) {
-            await esperar(intervaloBloque);
+        // Bucle de escucha ultrarrápido: revisa los comandos de Telegram cada 2 segundos durante el reposo
+        const tiempoInicioReposo = Date.now();
+        while (Date.now() - tiempoInicioReposo < esperaSiguienteCiclo) {
             await escucharComandosTelegram(botToken);
+            await esperar(2000);
         }
     }
 }
