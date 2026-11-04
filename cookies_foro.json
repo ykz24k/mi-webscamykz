@@ -1,0 +1,55 @@
+[
+  {
+    "name": "PMBC",
+    "value": "b5aec60b8ccfaa6c9a08b77fb0ca1798",
+    "domain": "altenens.is",
+    "path": "/",
+    "expires": -1,
+    "size": 36,
+    "httpOnly": false,
+    "secure": true,
+    "session": true,
+    "sameSite": "None",
+    "priority": "Medium",
+    "sourceScheme": "Secure"
+  },
+  {
+    "name": "xf_user",
+    "value": "1599052%2CIf4VsD5POt_f9TwMcRbhqY9NDZWIh2Btrf2L0d59",
+    "domain": "altenens.is",
+    "path": "/",
+    "expires": 1825209951.015825,
+    "size": 57,
+    "httpOnly": true,
+    "secure": true,
+    "session": false,
+    "priority": "Medium",
+    "sourceScheme": "Secure"
+  },
+  {
+    "name": "xf_csrf",
+    "value": "mjrYKBd6vqvrSVyF",
+    "domain": "altenens.is",
+    "path": "/",
+    "expires": -1,
+    "size": 23,
+    "httpOnly": false,
+    "secure": true,
+    "session": true,
+    "priority": "Medium",
+    "sourceScheme": "Secure"
+  },
+  {
+    "name": "xf_session",
+    "value": "L14aQyJr9KyX3xD4xyYFE4p0B_r5G3Os",
+    "domain": "altenens.is",
+    "path": "/",
+    "expires": -1,
+    "size": 42,
+    "httpOnly": true,
+    "secure": true,
+    "session": true,
+    "priority": "Medium",
+    "sourceScheme": "Secure"
+  }
+]
