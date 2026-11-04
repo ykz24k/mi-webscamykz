@@ -1,6 +1,6 @@
 /**
  * ==============================================================================
- * 🕷️ MÓDULO DE SCRAPING AUTÓNOMO 24/7 + PANEL INTERACTIVO VIP - YKZISWEB
+ * 🕷️ MÓDULO DE SCRAPING AUTÓNOMO 24/7 (MULTI-PÁGINA + FORMATO ORIGINAL)
  * ==============================================================================
  */
 
@@ -16,18 +16,18 @@ puppeteer.use(StealthPlugin());
 const HILOS_VISTOS_PATH = path.join(__dirname, 'hilos_vistos_cache.json');
 const COOKIES_PATH = path.join(__dirname, 'cookies_foro.json');
 const URL_LOGIN = 'https://altenens.is/login/';
-const URL_TARGET = 'https://altenens.is/forums/accounts-and-database-dumps.45/';
+const URL_BASE_TARGET = 'https://altenens.is/forums/accounts-and-database-dumps.45/';
 
 const MAX_CACHE_SIZE = 600;                  
 const TIEMPO_ESPERA_CICLO_MIN = 180000;      // 3 minutos mínimos
 const TIEMPO_ESPERA_CICLO_MAX = 300000;      // 5 minutos máximos
+const TOTAL_PAGINAS_A_ESCANEAR = 3;          // Cantidad de páginas del foro a recorrer en cada ciclo
 
 let ultimoOffsetTelegram = 0;
 let estadoBot = {
     ciclosRealizados: 0,
     aportesEnviadosTotales: 0,
     ultimoEscaneo: "Esperando primer ciclo...",
-    activo: true,
     inicioSistema: new Date().toLocaleString()
 };
 
@@ -47,7 +47,7 @@ async function guardarJSON(ruta, data) {
     try {
         await fs.writeFile(ruta, JSON.stringify(data, null, 2), 'utf-8');
     } catch (error) {
-        console.error(`[ykzisweb][Error de Escritura] No se pudo guardar el archivo en ${ruta}:`, error.message);
+        console.error(`[ykzisweb][Error de Escritura] No se pudo guardar en ${ruta}:`, error.message);
     }
 }
 
@@ -64,7 +64,7 @@ async function optimizarPagina(page) {
 }
 
 async function iniciarSesion(page, user, pass) {
-    console.log("[ykzisweb] Verificando integridad de cookies de sesión persistentes...");
+    console.log("[ykzisweb] Verificando cookies de sesión persistentes...");
     const cookiesAnteriores = await cargarJSON(COOKIES_PATH);
 
     if (cookiesAnteriores && cookiesAnteriores.length > 0) {
@@ -76,7 +76,6 @@ async function iniciarSesion(page, user, pass) {
             console.log("[ykzisweb] ¡Sesión restaurada con éxito mediante cookies guardadas!");
             return true;
         }
-        console.log("[ykzisweb] Las cookies almacenadas han expirado. Iniciando secuencia de login manual...");
     }
 
     await page.goto(URL_LOGIN, { waitUntil: 'domcontentloaded', timeout: 45000 });
@@ -87,7 +86,6 @@ async function iniciarSesion(page, user, pass) {
     await esperar(tiempoAleatorio(600, 1200));
     await page.type('input[name="password"]', pass, { delay: tiempoAleatorio(40, 85) });
 
-    console.log("[ykzisweb] Transmitiendo credenciales de autenticación al servidor...");
     await Promise.all([
         page.click('button.button--icon--login'),
         page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 })
@@ -95,12 +93,12 @@ async function iniciarSesion(page, user, pass) {
 
     const cookiesNuevas = await page.cookies();
     await guardarJSON(COOKIES_PATH, cookiesNuevas);
-    console.log("[ykzisweb] Autenticación completada satisfactoriamente y cookies respaldadas.");
+    console.log("[ykzisweb] Autenticación completada y cookies respaldadas.");
     return true;
 }
 
 // ==============================================================================
-// 🎛️ PANEL INTERACTIVO VIP Y COMANDOS DE TELEGRAM
+// 🎛️ PANEL INTERACTIVO (SIN BOTONES DE FORO EXTERNO)
 // ==============================================================================
 async function escucharComandosTelegram(botToken) {
     try {
@@ -109,11 +107,9 @@ async function escucharComandosTelegram(botToken) {
         });
 
         if (respuesta.data && respuesta.data.ok) {
-            const updates = respuesta.data.result;
-            for (const update of updates) {
+            for (const update of respuesta.data.result) {
                 ultimoOffsetTelegram = update.update_id + 1;
 
-                // 1. Manejo de Clics en Botones Inline (Callbacks)
                 if (update.callback_query) {
                     const chatId = update.callback_query.message.chat.id;
                     const messageId = update.callback_query.message.message_id;
@@ -121,76 +117,47 @@ async function escucharComandosTelegram(botToken) {
                     
                     if (data === 'cmd_estado') {
                         const hilosVistos = (await cargarJSON(HILOS_VISTOS_PATH)) || [];
-                        const msg = `━━━━━━━━━━━━━━━━━━━━━━\n` +
-                                    `📊 <b>PANEL DE ESTADÍSTICAS - YKZISWEB</b>\n` +
-                                    `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-                                    `🟢 <b>Estado del Motor:</b> <code>En Línea (24/7)</code>\n` +
-                                    `🚀 <b>Iniciado el:</b> <code>${estadoBot.inicioSistema}</code>\n` +
-                                    `🔄 <b>Barridos completados:</b> <code>${estadoBot.ciclosRealizados}</code>\n` +
-                                    `📤 <b>Aportes exitosos:</b> <code>${estadoBot.aportesEnviadosTotales}</code>\n` +
-                                    `📦 <b>Caché de hilos vistos:</b> <code>${hilosVistos.length} / ${MAX_CACHE_SIZE}</code>\n` +
-                                    `🕒 <b>Último escaneo:</b> <code>${estadoBot.ultimoEscaneo}</code>\n\n` +
-                                    `━━━━━━━━━━━━━━━━━━━━━━`;
+                        const msg = `📊 <b>ESTADO ACTUAL DEL BOT</b>\n\n` +
+                                    `🟢 <b>Estado:</b> <code>Ejecutándose 24/7</code>\n` +
+                                    `🔄 <b>Ciclos completados:</b> <code>${estadoBot.ciclosRealizados}</code>\n` +
+                                    `📤 <b>Aportes enviados:</b> <code>${estadoBot.aportesEnviadosTotales}</code>\n` +
+                                    `📦 <b>Hilos en caché:</b> <code>${hilosVistos.length}/${MAX_CACHE_SIZE}</code>\n` +
+                                    `🕒 <b>Último escaneo:</b> <code>${estadoBot.ultimoEscaneo}</code>`;
                         
-                        await editarMensajeConMenu(botToken, chatId, messageId, msg);
+                        await editarMensajeMenu(botToken, chatId, messageId, msg);
                     } else if (data === 'cmd_ayuda') {
-                        const msg = `━━━━━━━━━━━━━━━━━━━━━━\n` +
-                                    `❓ <b>CENTRO DE AYUDA Y ASISTENCIA</b>\n` +
-                                    `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-                                    `🤖 Este sistema opera de forma totalmente automatizada extrayendo bases de datos y dumps limpios desde Altenens.\n\n` +
-                                    `⚙️ <b>Comandos disponibles:</b>\n` +
-                                    `• <code>/menu</code> o <code>/start</code> - Muestra este panel VIP.\n` +
-                                    `• <code>/estado</code> - Muestra métricas rápidas.\n\n` +
-                                    `━━━━━━━━━━━━━━━━━━━━━━`;
-                        await editarMensajeConMenu(botToken, chatId, messageId, msg);
-                    } else if (data === 'cmd_menu_principal') {
-                        const msg = `🕷️ <b>CENTRAL DE MONITOREO - YKZISWEB BOT</b>\n\n` +
-                                    `Selecciona una opción de la botonera interactiva para gestionar el sistema en tiempo real:`;
-                        await editarMensajeConMenu(botToken, chatId, messageId, msg);
+                        const msg = `❓ <b>MENÚ DE AYUDA - YKZISWEB</b>\n\n` +
+                                    `Este bot rastrea de manera autónoma múltiples páginas del foro y reporta los hilos con formato numérico automáticamente.`;
+                        await editarMensajeMenu(botToken, chatId, messageId, msg);
                     }
                     
                     await axios.post(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
                         callback_query_id: update.callback_query.id,
-                        text: "⚡ Panel actualizado con éxito"
+                        text: "Actualizado"
                     }).catch(() => {});
                 }
 
-                // 2. Manejo de Comandos por Texto Plano (/start, /menu, /estado)
                 if (update.message && update.message.text) {
                     const chatId = update.message.chat.id;
                     const texto = update.message.text.trim();
 
                     if (texto.startsWith('/menu') || texto.startsWith('/start')) {
-                        const menuText = `🕷️ <b>CENTRAL DE MONITOREO - YKZISWEB BOT</b>\n\n` +
-                                         `Selecciona una opción de la botonera interactiva para gestionar el sistema en tiempo real:`;
-                        await enviarMensajeConMenu(botToken, chatId, menuText);
-                    } else if (texto.startsWith('/estado')) {
-                        const hilosVistos = (await cargarJSON(HILOS_VISTOS_PATH)) || [];
-                        const msg = `📊 <b>ESTADO RÁPIDO:</b> Ciclos: ${estadoBot.ciclosRealizados} | Aportes: ${estadoBot.aportesEnviadosTotales} | Caché: ${hilosVistos.length}/${MAX_CACHE_SIZE}`;
-                        await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, { 
-                            chat_id: chatId, 
-                            text: msg, 
-                            parse_mode: 'HTML' 
-                        }).catch(() => {});
+                        const menuText = `🕷️ <b>PANEL DE CONTROL - YKZISWEB BOT</b>\n\nSelecciona una opción:`;
+                        await enviarMensajeMenu(botToken, chatId, menuText);
                     }
                 }
             }
         }
-    } catch (error) {
-        // Silenciar errores menores de red en el polling
-    }
+    } catch (e) {}
 }
 
-async function enviarMensajeConMenu(botToken, chatId, texto) {
+async function enviarMensajeMenu(botToken, chatId, texto) {
     const teclado = {
         reply_markup: {
             inline_keyboard: [
                 [
-                    { text: "📊 Estadísticas VIP", callback_data: "cmd_estado" },
-                    { text: "❓ Ayuda y Guía", callback_data: "cmd_ayuda" }
-                ],
-                [
-                    { text: "🌐 Ir al Foro Objetivo", url: URL_TARGET }
+                    { text: "📊 Ver Estado", callback_data: "cmd_estado" },
+                    { text: "❓ Ayuda", callback_data: "cmd_ayuda" }
                 ]
             ]
         }
@@ -204,16 +171,13 @@ async function enviarMensajeConMenu(botToken, chatId, texto) {
     }).catch(() => {});
 }
 
-async function editarMensajeConMenu(botToken, chatId, messageId, texto) {
+async function editarMensajeMenu(botToken, chatId, messageId, texto) {
     const teclado = {
         reply_markup: {
             inline_keyboard: [
                 [
-                    { text: "📊 Estadísticas VIP", callback_data: "cmd_estado" },
-                    { text: "🏠 Menú Principal", callback_data: "cmd_menu_principal" }
-                ],
-                [
-                    { text: "🌐 Ir al Foro Objetivo", url: URL_TARGET }
+                    { text: "📊 Ver Estado", callback_data: "cmd_estado" },
+                    { text: "❓ Ayuda", callback_data: "cmd_ayuda" }
                 ]
             ]
         }
@@ -229,7 +193,7 @@ async function editarMensajeConMenu(botToken, chatId, messageId, texto) {
 }
 
 // ==============================================================================
-// 🔄 CICLO PRINCIPAL DE SCRAPING CON RESILIENCIA
+// 🔄 CICLO PRINCIPAL DE SCRAPING MULTI-PÁGINA
 // ==============================================================================
 async function revisarWebYEnviar() {
     const user = process.env.FORUM_USER;
@@ -238,99 +202,77 @@ async function revisarWebYEnviar() {
     const forwardTarget = process.env.FORWARD_TO;
 
     if (!user || !pass || !botToken) {
-        return console.error("[ykzisweb][Error Crítico] Faltan credenciales obligatorias en el archivo .env");
+        return console.error("[ykzisweb][Error Crítico] Faltan credenciales en el archivo .env");
     }
 
-    console.log("[ykzisweb] Subsistema de monitoreo 24/7 desplegado con Panel Interactivo VIP.");
+    console.log("[ykzisweb] Subsistema de monitoreo 24/7 multi-página iniciado.");
 
     while (true) {
-        // Monitorear comandos de Telegram antes de iniciar el ciclo de navegador
         await escucharComandosTelegram(botToken);
 
         const browser = await puppeteer.launch({ 
             headless: true,
             executablePath: '/usr/bin/chromium', 
-            args: [
-                '--no-sandbox', 
-                '--disable-setuid-sandbox', 
-                '--disable-dev-shm-usage',
-                '--disable-accelerated-2d-canvas',
-                '--disable-gpu',
-                '--window-size=1920,1080'
-            ]
+            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
         });
         
         try {
             const page = await browser.newPage();
             await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
-            await page.setViewport({ width: 1920, height: 1080 });
             await optimizarPagina(page);
 
             await iniciarSesion(page, user, pass);
-            console.log("[ykzisweb] Accediendo a la cartelera de objetivos:", URL_TARGET);
-            await page.goto(URL_TARGET, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-            const contenedor = await page.waitForSelector('div.structItem-container, div.structItem, div.js-threadList', { visible: true, timeout: 15000 }).catch(() => null);
+            let hilosTotales = [];
 
-            if (!contenedor) {
-                console.error("[ykzisweb][Advertencia] No se detectó el contenedor principal de hilos. Reintentando...");
-                await browser.close();
-                await esperar(60000);
-                continue;
-            }
+            // RECORRER MULTIPLES PÁGINAS DEL FORO
+            for (let numPagina = 1; numPagina <= TOTAL_PAGINAS_A_ESCANEAR; numPagina++) {
+                const urlPagina = numPagina === 1 ? URL_BASE_TARGET : `${URL_BASE_TARGET}page-${numPagina}`;
+                console.log(`[ykzisweb] Analizando página ${numPagina}: ${urlPagina}`);
+                
+                await page.goto(urlPagina, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
 
-            const hilosBrutos = await page.evaluate(() => {
-                const items = document.querySelectorAll('div.structItem-cell.structItem-cell--main, div.structItem');
-                return Array.from(items).map(item => {
-                    const titleLink = item.querySelector('div.structItem-title a[data-tp-primary], a.p-title-value, h3 a');
-                    const timeEl = item.querySelector('ul.structItem-minor li.u-dt, time.u-dt');
-                    
-                    let repliesCount = "0";
-                    const structItem = item.closest('div.structItem') || item;
-                    
-                    const metaCell = structItem.querySelector('div.structItem-cell.structItem-cell--meta');
-                    if (metaCell) {
-                        const dlElements = metaCell.querySelectorAll('dl.pairs');
-                        dlElements.forEach(dl => {
-                            const dt = dl.querySelector('dt');
-                            const dd = dl.querySelector('dd');
-                            if (dt && dt.innerText.toLowerCase().includes('replies')) {
-                                if (dd) repliesCount = dd.innerText.trim();
-                            }
-                        });
+                const contenedor = await page.waitForSelector('div.structItem-container, div.structItem, div.js-threadList', { visible: true, timeout: 10000 }).catch(() => null);
+                if (!contenedor) continue;
+
+                const hilosPagina = await page.evaluate(() => {
+                    const items = document.querySelectorAll('div.structItem-cell.structItem-cell--main, div.structItem');
+                    return Array.from(items).map(item => {
+                        const titleLink = item.querySelector('div.structItem-title a[data-tp-primary], a.p-title-value, h3 a');
+                        const timeEl = item.querySelector('ul.structItem-minor li.u-dt, time.u-dt');
                         
-                        if (repliesCount === "0") {
+                        let repliesCount = "0";
+                        const structItem = item.closest('div.structItem') || item;
+                        
+                        const metaCell = structItem.querySelector('div.structItem-cell.structItem-cell--meta');
+                        if (metaCell) {
                             const matchText = metaCell.innerText.match(/Replies:\s*(\d+)/i);
                             if (matchText && matchText[1]) repliesCount = matchText[1];
                         }
-                    }
 
-                    if (repliesCount === "0") {
-                        const matchGlobal = structItem.innerText.match(/Replies:\s*(\d+)/i);
-                        if (matchGlobal && matchGlobal[1]) repliesCount = matchGlobal[1];
-                    }
+                        if (!titleLink || !titleLink.getAttribute('href')) return null;
+                        
+                        const href = titleLink.getAttribute('href');
+                        return {
+                            titulo: titleLink.innerText.trim(),
+                            link: href.startsWith('http') ? href : 'https://altenens.is' + href,
+                            hora: timeEl ? timeEl.innerText.trim() : "Reciente",
+                            replies: repliesCount
+                        };
+                    }).filter(Boolean);
+                });
 
-                    if (!titleLink || !titleLink.getAttribute('href')) return null;
-                    
-                    const href = titleLink.getAttribute('href');
-                    return {
-                        titulo: titleLink.innerText.trim(),
-                        link: href.startsWith('http') ? href : 'https://altenens.is' + href,
-                        hora: timeEl ? timeEl.innerText.trim() : "Reciente",
-                        replies: repliesCount
-                    };
-                }).filter(Boolean);
-            });
+                hilosTotales.push(...hilosPagina);
+                await esperar(2000);
+            }
 
-            const hilos = Array.from(new Map(hilosBrutos.map(h => [h.link, h])).values());
-            console.log(`[ykzisweb] Hilos únicos analizados en cartelera: ${hilos.length}`);
+            const hilosUnicos = Array.from(new Map(hilosTotales.map(h => [h.link, h])).values());
+            console.log(`[ykzisweb] Total de hilos únicos recolectados en las ${TOTAL_PAGINAS_A_ESCANEAR} páginas: ${hilosUnicos.length}`);
 
             let hilosVistos = (await cargarJSON(HILOS_VISTOS_PATH)) || [];
             let contadorEnviados = 0;
 
-            for (const hilo of hilos) {
-                console.log(`[ykzisweb][Revisando] "${hilo.titulo}" (Replies: ${hilo.replies})`);
-
+            for (const hilo of hilosUnicos) {
                 if (!hilosVistos.includes(hilo.link)) {
                     let hiloPage;
                     
@@ -355,49 +297,32 @@ async function revisarWebYEnviar() {
 
                                 const badgeFrescura = parseInt(hilo.replies) <= 2 ? " 🔥 [Fresco / Sin vistas]" : "";
 
+                                // FORMATO ORIGINAL SOLICITADO (SIN BOTONES EXTRA)
                                 const mensajeTelegram = `🕷️ <b>[ykzisweb]</b>${badgeFrescura}\n\n` +
                                                         `<code>${contenidoFinal}</code>\n\n` +
                                                         `🕒 <b>Fecha:</b> ${hilo.hora}\n` +
                                                         `💬 <b>Replies:</b> ${hilo.replies}`;
 
-                                const tecladoAporte = {
-                                    reply_markup: {
-                                        inline_keyboard: [
-                                            [
-                                                { text: "📊 Ver Estadísticas", callback_data: "cmd_estado" },
-                                                { text: "🌐 Ver Hilo Original", url: hilo.link }
-                                            ]
-                                        ]
-                                    }
-                                };
+                                await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+                                    chat_id: forwardTarget,
+                                    text: mensajeTelegram,
+                                    parse_mode: 'HTML',
+                                    disable_web_page_preview: true
+                                }).catch((err) => {
+                                    console.error(`[Error Telegram]`, err.response?.data || err.message);
+                                });
 
-                                // ENVÍO BLINDADO CON MANEJO DE ERRORES HTTP 400
-                                try {
-                                    await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-                                        chat_id: forwardTarget,
-                                        text: mensajeTelegram,
-                                        parse_mode: 'HTML',
-                                        disable_web_page_preview: true,
-                                        ...tecladoAporte
-                                    });
-                                    contadorEnviados++;
-                                    estadoBot.aportesEnviadosTotales++;
-                                    console.log(`[ykzisweb][Éxito] Aporte transmitido vía HTTP Bot API.`);
-                                } catch (errApi) {
-                                    console.error(`[ykzisweb][Error Telegram API] No se pudo enviar el aporte:`, errApi.response?.data?.description || errApi.message);
-                                }
-
+                                contadorEnviados++;
+                                estadoBot.aportesEnviadosTotales++;
+                                console.log(`[ykzisweb][Éxito] Aporte enviado al canal principal.`);
                                 await esperar(tiempoAleatorio(3500, 5000));
-                            } else {
-                                console.log(`[ykzisweb][Descartado] El hilo no cumple con el patrón numérico.`);
                             }
                         }
 
                         hilosVistos.push(hilo.link);
                         await guardarJSON(HILOS_VISTOS_PATH, hilosVistos.slice(-MAX_CACHE_SIZE)); 
 
-                    } catch (errorInterno) {
-                        console.error(`[ykzisweb][Error de Hilo]`, errorInterno.message);
+                    } catch (e) {
                     } finally {
                         if (hiloPage) await hiloPage.close();
                     }
@@ -406,7 +331,7 @@ async function revisarWebYEnviar() {
 
             estadoBot.ciclosRealizados++;
             estadoBot.ultimoEscaneo = new Date().toLocaleTimeString();
-            console.log(`[ykzisweb] Ciclo de escaneo finalizado. Aportes enviados: ${contadorEnviados}`);
+            console.log(`[ykzisweb] Ciclo finalizado. Aportes enviados: ${contadorEnviados}`);
 
         } catch (errorCiclo) {
             console.error(`[ykzisweb][Error de Ciclo]`, errorCiclo.message);
@@ -415,9 +340,8 @@ async function revisarWebYEnviar() {
         }
 
         const esperaSiguienteCiclo = tiempoAleatorio(TIEMPO_ESPERA_CICLO_MIN, TIEMPO_ESPERA_CICLO_MAX);
-        console.log(`[ykzisweb] En reposo preventivo. Próximo barrido en ${(esperaSiguienteCiclo / 60000).toFixed(1)} minutos.`);
+        console.log(`[ykzisweb] En reposo. Próximo barrido en ${(esperaSiguienteCiclo / 60000).toFixed(1)} minutos.`);
         
-        // Espera inteligente dividida para seguir respondiendo al menú de Telegram
         const bloques = 12;
         const intervaloBloque = esperaSiguienteCiclo / bloques;
         for (let i = 0; i < bloques; i++) {
