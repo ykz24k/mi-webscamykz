@@ -1,6 +1,6 @@
 /**
  * ==============================================================================
- * 🕷️ MÓDULO DE SCRAPING AUTÓNOMO 24/7 + MENÚ INTERACTIVO - YKZISWEB (HTTP BOT API)
+ * 🕷️ MÓDULO DE SCRAPING AUTÓNOMO 24/7 + PANEL INTERACTIVO VIP - YKZISWEB
  * ==============================================================================
  */
 
@@ -26,8 +26,9 @@ let ultimoOffsetTelegram = 0;
 let estadoBot = {
     ciclosRealizados: 0,
     aportesEnviadosTotales: 0,
-    ultimoEscaneo: "Ninguno",
-    activo: true
+    ultimoEscaneo: "Esperando primer ciclo...",
+    activo: true,
+    inicioSistema: new Date().toLocaleString()
 };
 
 const esperar = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -99,9 +100,9 @@ async function iniciarSesion(page, user, pass) {
 }
 
 // ==============================================================================
-// 🎛️ GESTIÓN DEL MENÚ INTERACTIVO Y COMANDOS DE TELEGRAM
+// 🎛️ PANEL INTERACTIVO VIP Y COMANDOS DE TELEGRAM
 // ==============================================================================
-async function escucharComandosTelegram(botToken, targetChat) {
+async function escucharComandosTelegram(botToken) {
     try {
         const respuesta = await axios.get(`https://api.telegram.org/bot${botToken}/getUpdates`, {
             params: { offset: ultimoOffsetTelegram, timeout: 2 }
@@ -112,52 +113,71 @@ async function escucharComandosTelegram(botToken, targetChat) {
             for (const update of updates) {
                 ultimoOffsetTelegram = update.update_id + 1;
 
-                // Manejo de botones interactivos (Inline Keyboards)
+                // 1. Manejo de Clics en Botones Inline (Callbacks)
                 if (update.callback_query) {
                     const chatId = update.callback_query.message.chat.id;
+                    const messageId = update.callback_query.message.message_id;
                     const data = update.callback_query.data;
                     
                     if (data === 'cmd_estado') {
                         const hilosVistos = (await cargarJSON(HILOS_VISTOS_PATH)) || [];
-                        const msg = `📊 <b>ESTADO ACTUAL DEL BOT</b>\n\n` +
-                                    `🟢 <b>Estado:</b> ${estadoBot.activo ? 'Ejecutándose 24/7' : 'Pausado'}\n` +
-                                    `🔄 <b>Ciclos completados:</b> ${estadoBot.ciclosRealizados}\n` +
-                                    `📤 <b>Aportes enviados:</b> ${estadoBot.aportesEnviadosTotales}\n` +
-                                    `📦 <b>Hilos en caché:</b> ${hilosVistos.length}/${MAX_CACHE_SIZE}\n` +
-                                    `🕒 <b>Último escaneo:</b> ${estadoBot.ultimoEscaneo}`;
+                        const msg = `━━━━━━━━━━━━━━━━━━━━━━\n` +
+                                    `📊 <b>PANEL DE ESTADÍSTICAS - YKZISWEB</b>\n` +
+                                    `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+                                    `🟢 <b>Estado del Motor:</b> <code>En Línea (24/7)</code>\n` +
+                                    `🚀 <b>Iniciado el:</b> <code>${estadoBot.inicioSistema}</code>\n` +
+                                    `🔄 <b>Barridos completados:</b> <code>${estadoBot.ciclosRealizados}</code>\n` +
+                                    `📤 <b>Aportes exitosos:</b> <code>${estadoBot.aportesEnviadosTotales}</code>\n` +
+                                    `📦 <b>Caché de hilos vistos:</b> <code>${hilosVistos.length} / ${MAX_CACHE_SIZE}</code>\n` +
+                                    `🕒 <b>Último escaneo:</b> <code>${estadoBot.ultimoEscaneo}</code>\n\n` +
+                                    `━━━━━━━━━━━━━━━━━━━━━━`;
                         
-                        await enviarMensajeConMenu(botToken, chatId, msg);
+                        await editarMensajeConMenu(botToken, chatId, messageId, msg);
                     } else if (data === 'cmd_ayuda') {
-                        const msg = `❓ <b>MENÚ DE AYUDA - YKZISWEB</b>\n\n` +
-                                    `Este bot rastrea de manera autónoma hilos con patrones numéricos en foros y te los reporta automáticamente.\n` +
-                                    `Usa los botones de abajo para interactuar de forma rápida.`;
-                        await enviarMensajeConMenu(botToken, chatId, msg);
+                        const msg = `━━━━━━━━━━━━━━━━━━━━━━\n` +
+                                    `❓ <b>CENTRO DE AYUDA Y ASISTENCIA</b>\n` +
+                                    `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+                                    `🤖 Este sistema opera de forma totalmente automatizada extrayendo bases de datos y dumps limpios desde Altenens.\n\n` +
+                                    `⚙️ <b>Comandos disponibles:</b>\n` +
+                                    `• <code>/menu</code> o <code>/start</code> - Muestra este panel VIP.\n` +
+                                    `• <code>/estado</code> - Muestra métricas rápidas.\n\n` +
+                                    `━━━━━━━━━━━━━━━━━━━━━━`;
+                        await editarMensajeConMenu(botToken, chatId, messageId, msg);
+                    } else if (data === 'cmd_menu_principal') {
+                        const msg = `🕷️ <b>CENTRAL DE MONITOREO - YKZISWEB BOT</b>\n\n` +
+                                    `Selecciona una opción de la botonera interactiva para gestionar el sistema en tiempo real:`;
+                        await editarMensajeConMenu(botToken, chatId, messageId, msg);
                     }
                     
                     await axios.post(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
                         callback_query_id: update.callback_query.id,
-                        text: "¡Comando procesado!"
-                    });
+                        text: "⚡ Panel actualizado con éxito"
+                    }).catch(() => {});
                 }
 
-                // Manejo de comandos por texto plano (/menu, /estado, etc.)
+                // 2. Manejo de Comandos por Texto Plano (/start, /menu, /estado)
                 if (update.message && update.message.text) {
                     const chatId = update.message.chat.id;
                     const texto = update.message.text.trim();
 
                     if (texto.startsWith('/menu') || texto.startsWith('/start')) {
-                        const menuText = `🕷️ <b>PANEL DE CONTROL - YKZISWEB BOT</b>\n\nSelecciona una opción del menú interactivo:`;
+                        const menuText = `🕷️ <b>CENTRAL DE MONITOREO - YKZISWEB BOT</b>\n\n` +
+                                         `Selecciona una opción de la botonera interactiva para gestionar el sistema en tiempo real:`;
                         await enviarMensajeConMenu(botToken, chatId, menuText);
                     } else if (texto.startsWith('/estado')) {
                         const hilosVistos = (await cargarJSON(HILOS_VISTOS_PATH)) || [];
-                        const msg = `📊 <b>ESTADO:</b> Ciclos: ${estadoBot.ciclosRealizados} | Aportes: ${estadoBot.aportesEnviadosTotales} | Caché: ${hilosVistos.length}`;
-                        await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, { chat_id: chatId, text: msg, parse_mode: 'HTML' });
+                        const msg = `📊 <b>ESTADO RÁPIDO:</b> Ciclos: ${estadoBot.ciclosRealizados} | Aportes: ${estadoBot.aportesEnviadosTotales} | Caché: ${hilosVistos.length}/${MAX_CACHE_SIZE}`;
+                        await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, { 
+                            chat_id: chatId, 
+                            text: msg, 
+                            parse_mode: 'HTML' 
+                        }).catch(() => {});
                     }
                 }
             }
         }
     } catch (error) {
-        // Ignorar errores menores de red en el polling continuo
+        // Silenciar errores menores de red en el polling
     }
 }
 
@@ -166,8 +186,8 @@ async function enviarMensajeConMenu(botToken, chatId, texto) {
         reply_markup: {
             inline_keyboard: [
                 [
-                    { text: "📊 Ver Estado", callback_data: "cmd_estado" },
-                    { text: "❓ Ayuda", callback_data: "cmd_ayuda" }
+                    { text: "📊 Estadísticas VIP", callback_data: "cmd_estado" },
+                    { text: "❓ Ayuda y Guía", callback_data: "cmd_ayuda" }
                 ],
                 [
                     { text: "🌐 Ir al Foro Objetivo", url: URL_TARGET }
@@ -181,11 +201,35 @@ async function enviarMensajeConMenu(botToken, chatId, texto) {
         text: texto,
         parse_mode: 'HTML',
         ...teclado
-    });
+    }).catch(() => {});
+}
+
+async function editarMensajeConMenu(botToken, chatId, messageId, texto) {
+    const teclado = {
+        reply_markup: {
+            inline_keyboard: [
+                [
+                    { text: "📊 Estadísticas VIP", callback_data: "cmd_estado" },
+                    { text: "🏠 Menú Principal", callback_data: "cmd_menu_principal" }
+                ],
+                [
+                    { text: "🌐 Ir al Foro Objetivo", url: URL_TARGET }
+                ]
+            ]
+        }
+    };
+
+    await axios.post(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+        chat_id: chatId,
+        message_id: messageId,
+        text: texto,
+        parse_mode: 'HTML',
+        ...teclado
+    }).catch(() => {});
 }
 
 // ==============================================================================
-// 🔄 CICLO PRINCIPAL DE SCRAPING
+// 🔄 CICLO PRINCIPAL DE SCRAPING CON RESILIENCIA
 // ==============================================================================
 async function revisarWebYEnviar() {
     const user = process.env.FORUM_USER;
@@ -194,14 +238,14 @@ async function revisarWebYEnviar() {
     const forwardTarget = process.env.FORWARD_TO;
 
     if (!user || !pass || !botToken) {
-        return console.error("[ykzisweb][Error Crítico] Faltan credenciales obligatorias (FORUM_USER / FORUM_PASS / TELEGRAM_BOT_TOKEN) en el archivo .env");
+        return console.error("[ykzisweb][Error Crítico] Faltan credenciales obligatorias en el archivo .env");
     }
 
-    console.log("[ykzisweb] Subsistema de monitoreo 24/7 desplegado mediante HTTP Bot API con menú interactivo.");
+    console.log("[ykzisweb] Subsistema de monitoreo 24/7 desplegado con Panel Interactivo VIP.");
 
     while (true) {
-        // Revisar comandos de Telegram en segundo plano antes de cada ciclo pesado
-        await escucharComandosTelegram(botToken, forwardTarget);
+        // Monitorear comandos de Telegram antes de iniciar el ciclo de navegador
+        await escucharComandosTelegram(botToken);
 
         const browser = await puppeteer.launch({ 
             headless: true,
@@ -229,7 +273,7 @@ async function revisarWebYEnviar() {
             const contenedor = await page.waitForSelector('div.structItem-container, div.structItem, div.js-threadList', { visible: true, timeout: 15000 }).catch(() => null);
 
             if (!contenedor) {
-                console.error("[ykzisweb][Advertencia] No se detectó el contenedor principal de hilos. Reintentando en el próximo ciclo...");
+                console.error("[ykzisweb][Advertencia] No se detectó el contenedor principal de hilos. Reintentando...");
                 await browser.close();
                 await esperar(60000);
                 continue;
@@ -316,29 +360,33 @@ async function revisarWebYEnviar() {
                                                         `🕒 <b>Fecha:</b> ${hilo.hora}\n` +
                                                         `💬 <b>Replies:</b> ${hilo.replies}`;
 
-                                // ENVÍO CON MENÚ INLINE ADJUNTO A CADA APORTE
                                 const tecladoAporte = {
                                     reply_markup: {
                                         inline_keyboard: [
                                             [
-                                                { text: "📊 Ver Estado", callback_data: "cmd_estado" },
+                                                { text: "📊 Ver Estadísticas", callback_data: "cmd_estado" },
                                                 { text: "🌐 Ver Hilo Original", url: hilo.link }
                                             ]
                                         ]
                                     }
                                 };
 
-                                await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-                                    chat_id: forwardTarget,
-                                    text: mensajeTelegram,
-                                    parse_mode: 'HTML',
-                                    disable_web_page_preview: true,
-                                    ...tecladoAporte
-                                });
-                                
-                                contadorEnviados++;
-                                estadoBot.aportesEnviadosTotales++;
-                                console.log(`[ykzisweb][Éxito] Aporte transmitido vía HTTP Bot API con menú interactivo.`);
+                                // ENVÍO BLINDADO CON MANEJO DE ERRORES HTTP 400
+                                try {
+                                    await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+                                        chat_id: forwardTarget,
+                                        text: mensajeTelegram,
+                                        parse_mode: 'HTML',
+                                        disable_web_page_preview: true,
+                                        ...tecladoAporte
+                                    });
+                                    contadorEnviados++;
+                                    estadoBot.aportesEnviadosTotales++;
+                                    console.log(`[ykzisweb][Éxito] Aporte transmitido vía HTTP Bot API.`);
+                                } catch (errApi) {
+                                    console.error(`[ykzisweb][Error Telegram API] No se pudo enviar el aporte:`, errApi.response?.data?.description || errApi.message);
+                                }
+
                                 await esperar(tiempoAleatorio(3500, 5000));
                             } else {
                                 console.log(`[ykzisweb][Descartado] El hilo no cumple con el patrón numérico.`);
@@ -369,12 +417,12 @@ async function revisarWebYEnviar() {
         const esperaSiguienteCiclo = tiempoAleatorio(TIEMPO_ESPERA_CICLO_MIN, TIEMPO_ESPERA_CICLO_MAX);
         console.log(`[ykzisweb] En reposo preventivo. Próximo barrido en ${(esperaSiguienteCiclo / 60000).toFixed(1)} minutos.`);
         
-        // Dividir la espera en bloques cortos para seguir escuchando comandos de Telegram mientras descansa
-        const bloques = 10;
+        // Espera inteligente dividida para seguir respondiendo al menú de Telegram
+        const bloques = 12;
         const intervaloBloque = esperaSiguienteCiclo / bloques;
         for (let i = 0; i < bloques; i++) {
             await esperar(intervaloBloque);
-            await escucharComandosTelegram(botToken, forwardTarget);
+            await escucharComandosTelegram(botToken);
         }
     }
 }
