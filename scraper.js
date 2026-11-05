@@ -1,10 +1,9 @@
 /**
  * ====================================================================================
- * 🕷️ YKZISWEB - MOTOR DE SCRAPING AUTÓNOMO 24/7 ENTERPRISE EDITION (MULTI-PÁGINA + VIP)
+ * 🕷️ YKZISWEB - MOTOR DE SCRAPING AUTÓNOMO 24/7 ENTERPRISE EDITION (MÁS DE 600 LÍNEAS)
  * ====================================================================================
- * Descripción: Módulo avanzado para la extracción, filtrado numérico y retransmisión
- * autónoma de hilos con persistencia de sesión, caché masiva anti-repetición y panel
- * de control interactivo en tiempo real integrado con la API HTTP de Telegram.
+ * Módulo avanzado de extracción web con Puppeteer Stealth, caché masiva de 5000 elementos,
+ * control de pausas/reanudación en tiempo real y selector de rangos de páginas dinámicos.
  * ====================================================================================
  */
 
@@ -15,52 +14,53 @@ const path = require('path');
 const axios = require('axios');
 require('dotenv').config();
 
-// Aplicar plugins anti-detección de huella digital
+// Aplicar plugins anti-detección de huella digital para evitar bloqueos por Cloudflare/DDoS-Guard
 puppeteer.use(StealthPlugin());
 
 // ====================================================================================
-// 📁 CONFIGURACIÓN DE RUTAS Y CONSTANTES GLOBALES DEL SISTEMA
+// 📁 CONFIGURACIÓN DE RUTAS, ARCHIVOS DE PERSISTENCIA Y CONSTANTES GLOBALES
 // ====================================================================================
 const HILOS_VISTOS_PATH = path.join(__dirname, 'hilos_vistos_cache.json');
 const COOKIES_PATH = path.join(__dirname, 'cookies_foro.json');
 const URL_LOGIN = 'https://altenens.is/login/';
 const URL_BASE_TARGET = 'https://altenens.is/forums/accounts-and-database-dumps.45/';
 
-// Caché masiva de 5000 elementos para blindar el sistema contra reenvíos o duplicados
+// Configuración de tamaños de caché y retardos temporales de seguridad
 const MAX_CACHE_SIZE = 5000;                  
-const TIEMPO_ESPERA_CICLO_MIN = 180000;      // 3 minutos mínimos de reposo
-const TIEMPO_ESPERA_CICLO_MAX = 300000;      // 5 minutos máximos de reposo
+const TIEMPO_ESPERA_CICLO_MIN = 180000;      // 3 minutos mínimos de reposo entre ciclos
+const TIEMPO_ESPERA_CICLO_MAX = 300000;      // 5 minutos máximos de reposo entre ciclos
 
-// Variables de estado del bot y control de paginación dinámica
-let configuracionPaginas = 3; 
+// Variables de estado del bot, rangos de páginas y control interactivo
+let paginaInicio = 1;
+let paginaFin = 10; 
+let botPausado = false; // Interruptor general de pausa/reanudación
 let ultimoOffsetTelegram = 0;
 let estadoBot = {
     ciclosRealizados: 0,
     aportesEnviadosTotales: 0,
     ultimoEscaneo: "Esperando primer ciclo...",
-    inicioSistema: new Date().toLocaleString(),
-    paginasObjetivo: configuracionPaginas
+    inicioSistema: new Date().toLocaleString()
 };
 
 // ====================================================================================
-// 🛠️ UTILIDADES Y FUNCIONES AUXILIARES DE SOPORTE TÉCNICO
+// 🛠️ MÓDULO DE UTILIDADES Y FUNCIONES AUXILIARES DE SOPORTE TÉCNICO
 // ====================================================================================
 
 /**
- * Genera una promesa de retraso temporal para simular tiempos humanos.
+ * Genera una promesa de retraso temporal para simular tiempos de espera humanos.
  * @param {number} ms Milisegundos de espera
  */
 const esperar = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
  * Calcula un intervalo de tiempo aleatorio dentro de un rango determinado.
- * @param {number} min Valor mínimo
- * @param {number} max Valor máximo
+ * @param {number} min Valor mínimo en ms
+ * @param {number} max Valor máximo en ms
  */
 const tiempoAleatorio = (min, max) => Math.floor(Math.random() * (max - min + 1) + min);
 
 /**
- * Carga de manera segura un archivo JSON del disco local.
+ * Carga de manera segura un archivo JSON desde el disco local.
  * @param {string} ruta Ruta absoluta del archivo
  */
 async function cargarJSON(ruta) {
@@ -73,7 +73,7 @@ async function cargarJSON(ruta) {
 }
 
 /**
- * Guarda de manera segura estructuras de datos en formato JSON en disco.
+ * Guarda de manera segura estructuras de datos en formato JSON en el disco local.
  * @param {string} ruta Ruta absoluta del archivo
  * @param {Object|Array} data Datos a serializar
  */
@@ -86,7 +86,7 @@ async function guardarJSON(ruta, data) {
 }
 
 /**
- * Optimiza el rendimiento de la página web bloqueando recursos innecesarios (imágenes, fuentes, etc.)
+ * Optimiza el rendimiento de carga bloqueando recursos innecesarios (imágenes, fuentes, hojas de estilo).
  * @param {import('puppeteer').Page} page Instancia de la página de Puppeteer
  */
 async function optimizarPagina(page) {
@@ -101,7 +101,7 @@ async function optimizarPagina(page) {
             }
         });
     } catch (e) {
-        // Ignorar excepciones secundarias de intercepción
+        // Ignorar excepciones secundarias de intercepción en flujos paralelos
     }
 }
 
@@ -169,17 +169,34 @@ async function escucharComandosTelegram(botToken) {
             for (const update of respuesta.data.result) {
                 ultimoOffsetTelegram = update.update_id + 1;
 
-                // Procesamiento de comandos enviados por texto plano (/start, /menu)
+                // Procesamiento de comandos enviados por texto plano (/start, /menu, /paginas)
                 if (update.message && update.message.text) {
                     const chatId = update.message.chat.id;
-                    const textoCrudo = update.message.text.trim().toLowerCase();
-                    const texto = textoCrudo.split('@')[0];
-
-                    console.log(`[Telegram] Mensaje detectado en chat ${chatId}: "${textoCrudo}"`);
+                    const textoCrudo = update.message.text.trim();
+                    const texto = textoCrudo.split('@')[0].toLowerCase();
 
                     if (texto === '/menu' || texto === '/start') {
-                        const menuText = `🕷️ <b>PANEL DE CONTROL VIP - YKZISWEB BOT</b>\n\nSelecciona una opción del menú interactivo para gestionar el sistema:`;
-                        await enviarMensajeMenu(botToken, chatId, menuText);
+                        await enviarMenuPrincipal(botToken, chatId);
+                    } else if (texto.startsWith('/paginas')) {
+                        const partes = textoCrudo.split(' ');
+                        if (partes[1] && partes[1].includes('-')) {
+                            const [i, f] = partes[1].split('-').map(Number);
+                            if (!isNaN(i) && !isNaN(f) && i <= f) {
+                                paginaInicio = i;
+                                paginaFin = f;
+                                await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+                                    chat_id: chatId,
+                                    text: `✅ Rango actualizado con éxito: Escaneando desde la página <b>${i}</b> hasta la <b>${f}</b>.`,
+                                    parse_mode: 'HTML'
+                                }).catch(() => {});
+                            }
+                        } else {
+                            await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+                                chat_id: chatId,
+                                text: `ℹ️ Formato incorrecto. Utiliza el comando de texto de la siguiente manera: <code>/paginas 1-15</code>`,
+                                parse_mode: 'HTML'
+                            }).catch(() => {});
+                        }
                     }
                 }
 
@@ -190,36 +207,23 @@ async function escucharComandosTelegram(botToken) {
                     const data = update.callback_query.data;
                     
                     if (data === 'cmd_estado') {
-                        const hilosVistos = (await cargarJSON(HILOS_VISTOS_PATH)) || [];
-                        const msg = `📊 <b>ESTADO ACTUAL DEL SISTEMA YKZISWEB</b>\n\n` +
-                                    `🟢 <b>Estado del Motor:</b> <code>Operativo 24/7</code>\n` +
-                                    `📄 <b>Páginas objetivo por ciclo:</b> <code>1 a ${estadoBot.paginasObjetivo}</code>\n` +
-                                    `🔄 <b>Ciclos de barrido completados:</b> <code>${estadoBot.ciclosRealizados}</code>\n` +
-                                    `📤 <b>Aportes exitosos enviados:</b> <code>${estadoBot.aportesEnviadosTotales}</code>\n` +
-                                    `📦 <b>Caché anti-repetición:</b> <code>${hilosVistos.length}/${MAX_CACHE_SIZE} hilos</code>\n` +
-                                    `🕒 <b>Último escaneo registrado:</b> <code>${estadoBot.ultimoEscaneo}</code>\n` +
-                                    `🚀 <b>Sistema iniciado el:</b> <code>${estadoBot.inicioSistema}</code>`;
-                        
-                        await editarMensajeMenu(botToken, chatId, messageId, msg);
-                    } else if (data === 'cmd_paginas') {
-                        const msg = `📑 <b>SELECTOR DE PROFUNDIDAD DE PÁGINAS</b>\n\n` +
-                                    `Actualmente el bot escanea desde la página 1 hasta la <b>página ${configuracionPaginas}</b>.\n` +
-                                    `Selecciona el límite de páginas que deseas barrer en cada ciclo automático:`;
-                        await editarMensajeSelectorPaginas(botToken, chatId, messageId, msg);
-                    } else if (data.startsWith('set_pag_')) {
-                        const nuevaPagina = parseInt(data.replace('set_pag_', ''));
-                        configuracionPaginas = nuevaPagina;
-                        estadoBot.paginasObjetivo = nuevaPagina;
-
-                        const msg = `✅ <b>¡Configuración de páginas actualizada con éxito!</b>\n\nAhora el bot escaneará de forma autónoma desde la página 1 hasta la <b>página ${nuevaPagina}</b> en cada ciclo.`;
-                        await editarMensajeMenu(botToken, chatId, messageId, msg);
+                        await actualizarMenuEstado(botToken, chatId, messageId);
+                    } else if (data === 'cmd_toggle_pausa') {
+                        botPausado = !botPausado;
+                        await actualizarMenuEstado(botToken, chatId, messageId);
+                    } else if (data === 'cmd_rango_1_5') {
+                        paginaInicio = 1; paginaFin = 5;
+                        await actualizarMenuEstado(botToken, chatId, messageId);
+                    } else if (data === 'cmd_rango_1_10') {
+                        paginaInicio = 1; paginaFin = 10;
+                        await actualizarMenuEstado(botToken, chatId, messageId);
+                    } else if (data === 'cmd_rango_1_20') {
+                        paginaInicio = 1; paginaFin = 20;
+                        await actualizarMenuEstado(botToken, chatId, messageId);
                     } else if (data === 'cmd_ayuda') {
-                        const msg = `❓ <b>CENTRO DE AYUDA Y ASISTENCIA - YKZISWEB</b>\n\n` +
-                                    `🤖 Este sistema autónomo rastrea múltiples páginas del foro Altenens de forma continua.\n\n` +
-                                    `⚙️ <b>Características principales:</b>\n` +
-                                    `• Filtra estrictamente hilos con contenido numérico válido.\n` +
-                                    `• Muestra la fecha exacta y los <b>Replies</b> originales.\n` +
-                                    `• Caché inteligente de 5000 elementos para garantizar cero duplicados.`;
+                        const msg = `❓ <b>CENTRO DE AYUDA YKZISWEB</b>\n\n` +
+                                    `• <b>Pausar/Reanudar:</b> Detiene temporalmente los envíos sin perder la memoria de hilos vistos.\n` +
+                                    `• <b>Rango de Páginas:</b> Puedes configurar el alcance con los botones o escribiendo <code>/paginas 1-20</code> en el chat.`;
                         await editarMensajeMenu(botToken, chatId, messageId, msg);
                     }
                     
@@ -238,13 +242,29 @@ async function escucharComandosTelegram(botToken) {
 /**
  * Envía el menú principal interactivo al chat de Telegram.
  */
-async function enviarMensajeMenu(botToken, chatId, texto) {
+async function enviarMenuPrincipal(botToken, chatId) {
+    const hilosVistos = (await cargarJSON(HILOS_VISTOS_PATH)) || [];
+    const estadoTxt = botPausado ? "🔴 PAUSADO (En reposo)" : "🟢 ACTIVO (Operando 24/7)";
+    const botonPausaTxt = botPausado ? "▶️ Reanudar Bot" : "⏸️ Pausar Bot";
+
+    const texto = `🕷️ <b>PANEL DE CONTROL VIP - YKZISWEB</b>\n\n` +
+                  `• <b>Estado:</b> ${estadoTxt}\n` +
+                  `• <b>Rango de Páginas:</b> <code>Página ${paginaInicio} a ${paginaFin}</code>\n` +
+                  `• <b>Caché Anti-Duplicados:</b> <code>${hilosVistos.length} hilos guardados</code>\n` +
+                  `• <b>Ciclos Completados:</b> <code>${estadoBot.ciclosRealizados}</code>\n\n` +
+                  `Selecciona una opción del panel:`;
+
     const teclado = {
         reply_markup: {
             inline_keyboard: [
                 [
-                    { text: "📊 Ver Estado del Sistema", callback_data: "cmd_estado" },
-                    { text: "📑 Cambiar Páginas (1-5)", callback_data: "cmd_paginas" }
+                    { text: botonPausaTxt, callback_data: "cmd_toggle_pausa" },
+                    { text: "📊 Actualizar Estado", callback_data: "cmd_estado" }
+                ],
+                [
+                    { text: "📄 Páginas (1-5)", callback_data: "cmd_rango_1_5" },
+                    { text: "📄 Páginas (1-10)", callback_data: "cmd_rango_1_10" },
+                    { text: "📄 Páginas (1-20)", callback_data: "cmd_rango_1_20" }
                 ],
                 [
                     { text: "❓ Ayuda y Soporte", callback_data: "cmd_ayuda" }
@@ -262,15 +282,31 @@ async function enviarMensajeMenu(botToken, chatId, texto) {
 }
 
 /**
- * Edita un mensaje existente en Telegram con el menú principal.
+ * Actualiza el menú de estado existente en Telegram de forma dinámica.
  */
-async function editarMensajeMenu(botToken, chatId, messageId, texto) {
+async function actualizarMenuEstado(botToken, chatId, messageId) {
+    const hilosVistos = (await cargarJSON(HILOS_VISTOS_PATH)) || [];
+    const estadoTxt = botPausado ? "🔴 PAUSADO (En reposo)" : "🟢 ACTIVO (Operando 24/7)";
+    const botonPausaTxt = botPausado ? "▶️ Reanudar Bot" : "⏸️ Pausar Bot";
+
+    const texto = `🕷️ <b>PANEL DE CONTROL VIP - YKZISWEB</b>\n\n` +
+                  `• <b>Estado:</b> ${estadoTxt}\n` +
+                  `• <b>Rango de Páginas:</b> <code>Página ${paginaInicio} a ${paginaFin}</code>\n` +
+                  `• <b>Caché Anti-Duplicados:</b> <code>${hilosVistos.length} hilos guardados</code>\n` +
+                  `• <b>Ciclos Completados:</b> <code>${estadoBot.ciclosRealizados}</code>\n\n` +
+                  `Selecciona una opción del panel:`;
+
     const teclado = {
         reply_markup: {
             inline_keyboard: [
                 [
-                    { text: "📊 Ver Estado del Sistema", callback_data: "cmd_estado" },
-                    { text: "📑 Cambiar Páginas (1-5)", callback_data: "cmd_paginas" }
+                    { text: botonPausaTxt, callback_data: "cmd_toggle_pausa" },
+                    { text: "📊 Actualizar Estado", callback_data: "cmd_estado" }
+                ],
+                [
+                    { text: "📄 Páginas (1-5)", callback_data: "cmd_rango_1_5" },
+                    { text: "📄 Páginas (1-10)", callback_data: "cmd_rango_1_10" },
+                    { text: "📄 Páginas (1-20)", callback_data: "cmd_rango_1_20" }
                 ],
                 [
                     { text: "❓ Ayuda y Soporte", callback_data: "cmd_ayuda" }
@@ -289,23 +325,14 @@ async function editarMensajeMenu(botToken, chatId, messageId, texto) {
 }
 
 /**
- * Muestra el selector de páginas interactivo (1 al 5).
+ * Muestra mensajes informativos secundarios en el menú.
  */
-async function editarMensajeSelectorPaginas(botToken, chatId, messageId, texto) {
+async function editarMensajeMenu(botToken, chatId, messageId, texto) {
     const teclado = {
         reply_markup: {
             inline_keyboard: [
                 [
-                    { text: "📄 Página 1", callback_data: "set_pag_1" },
-                    { text: "📄 Página 2", callback_data: "set_pag_2" },
-                    { text: "📄 Página 3", callback_data: "set_pag_3" }
-                ],
-                [
-                    { text: "📄 Página 4", callback_data: "set_pag_4" },
-                    { text: "📄 Página 5", callback_data: "set_pag_5" }
-                ],
-                [
-                    { text: "⬅️ Volver al Menú Principal", callback_data: "cmd_estado" }
+                    { text: "🏠 Volver al Menú Principal", callback_data: "cmd_estado" }
                 ]
             ]
         }
@@ -340,6 +367,14 @@ async function revisarWebYEnviar() {
     console.log("[ykzisweb] Subsistema enterprise anti-repetición y multi-página desplegado correctamente.");
 
     while (true) {
+        // Si el usuario pausó el bot, entramos en modo de espera activa escuchando comandos sin procesar web
+        if (botPausado) {
+            console.log("[ykzisweb] ⏸️ El bot se encuentra PAUSADO. Manteniendo memoria caché intacta...");
+            await esperar(5000);
+            await escucharComandosTelegram(botToken);
+            continue;
+        }
+
         // Escuchar comandos de Telegram antes de iniciar tareas pesadas de navegador
         await escucharComandosTelegram(botToken);
 
@@ -367,8 +402,10 @@ async function revisarWebYEnviar() {
 
             let hilosTotales = [];
 
-            // Bucle dinámico para recorrer las páginas seleccionadas por el usuario (1 hasta configuracionPaginas)
-            for (let numPagina = 1; numPagina <= configuracionPaginas; numPagina++) {
+            // Bucle dinámico basado en el rango personalizado configurado por el usuario
+            for (let numPagina = paginaInicio; numPagina <= paginaFin; numPagina++) {
+                if (botPausado) break; // Si se pausa a mitad del ciclo, abortamos de inmediato
+
                 const urlPagina = numPagina === 1 ? URL_BASE_TARGET : `${URL_BASE_TARGET}page-${numPagina}`;
                 console.log(`[ykzisweb] Analizando cartelera - Página ${numPagina}: ${urlPagina}`);
                 
@@ -421,15 +458,22 @@ async function revisarWebYEnviar() {
                 await esperar(1500);
             }
 
+            if (botPausado) {
+                await browser.close();
+                continue;
+            }
+
             // Filtrar hilos duplicados mediante un Map basado en la URL del enlace único
             const hilosUnicos = Array.from(new Map(hilosTotales.map(h => [h.link, h])).values());
-            console.log(`[ykzisweb] Total de hilos únicos recolectados (Páginas 1 a ${configuracionPaginas}): ${hilosUnicos.length}`);
+            console.log(`[ykzisweb] Total de hilos únicos recolectados (Páginas ${paginaInicio} a ${paginaFin}): ${hilosUnicos.length}`);
 
             // Cargar caché masiva anti-repetición
             let hilosVistos = (await cargarJSON(HILOS_VISTOS_PATH)) || [];
             let contadorEnviados = 0;
 
             for (const hilo of hilosUnicos) {
+                if (botPausado) break;
+
                 // Validación estricta: si el hilo no está en la caché, se procesa
                 if (!hilosVistos.includes(hilo.link)) {
                     let hiloPage;
@@ -507,9 +551,9 @@ async function revisarWebYEnviar() {
         const esperaSiguienteCiclo = tiempoAleatorio(TIEMPO_ESPERA_CICLO_MIN, TIEMPO_ESPERA_CICLO_MAX);
         console.log(`[ykzisweb] Sistema en reposo preventivo. Próximo barrido en ${(esperaSiguienteCiclo / 60000).toFixed(1)} minutos.`);
         
-        // Bucle de escucha ultrarrápido: revisa los comandos de Telegram cada 2 segundos durante el reposo
+        // Bucle de escucha ultrarrápido (2 segundos) para responder al menú y pausar/reanudar al instante
         const tiempoInicioReposo = Date.now();
-        while (Date.now() - tiempoInicioReposo < esperaSiguienteCiclo) {
+        while (Date.now() - tiempoInicioReposo < esperaSiguienteCiclo && !botPausado) {
             await escucharComandosTelegram(botToken);
             await esperar(2000);
         }
