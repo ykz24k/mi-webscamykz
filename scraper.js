@@ -1,31 +1,41 @@
 /**
  * ====================================================================================================
- * 🕷️ YKZISWEB - MOTOR DE SCRAPING AUTÓNOMO 24/7 ENTERPRISE EDITION V3.0
+ * 🕷️ YKZISWEB - MOTOR DE SCRAPING AUTÓNOMO 24/7 ENTERPRISE EDITION V5.0 (ULTIMATE)
  * ====================================================================================================
- * Descripción: Sistema masivo de extracción con arquitectura orientada a objetos.
- * Incluye: Logger personalizado, Motor de Caché Atómico, Enrutador de Telegram asíncrono,
- * Evasión avanzada (Stealth) y Control de Ciclos con Backoff exponencial.
+ * Arquitectura Orientada a Objetos (POO) con Inyección de Dependencias.
+ * 
+ * Módulos integrados:
+ * - Logger Avanzado (Consola + Archivo)
+ * - Monitor de Recursos del Sistema (Telemetría de CPU/RAM)
+ * - Gestor de Estadísticas Persistentes (Uptime, Ciclos, Errores)
+ * - Motor de Caché Atómico (Previene corrupción por cortes de energía)
+ * - Enrutador Telegram Asíncrono (Long-Polling paralelo, sin bloqueos)
+ * - Freno de Mano Absoluto (Corta envíos en milisegundos si se pausa)
+ * - Motor Stealth Puppeteer con Evasión de Fingerprinting
  * ====================================================================================================
  */
 
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const fs = require('fs').promises;
+const fsSync = require('fs');
 const path = require('path');
 const axios = require('axios');
 const crypto = require('crypto');
+const os = require('os');
 require('dotenv').config();
 
-// Aplicar plugins anti-detección
 puppeteer.use(StealthPlugin());
 
 // ====================================================================================================
-// ⚙️ CONSTANTES Y CONFIGURACIÓN GLOBAL
+// ⚙️ CONSTANTES Y CONFIGURACIÓN GLOBAL DEL SISTEMA
 // ====================================================================================================
 const PATHS = {
-    CACHE: path.join(__dirname, 'hilos_vistos_cache.json'),
-    COOKIES: path.join(__dirname, 'cookies_foro.json'),
-    TEMP_CACHE: path.join(__dirname, 'hilos_vistos_cache.tmp.json') // Para escrituras atómicas
+    CACHE: path.join(__dirname, 'data_cache.json'),
+    TEMP_CACHE: path.join(__dirname, 'data_cache.tmp.json'),
+    COOKIES: path.join(__dirname, 'data_cookies.json'),
+    STATS: path.join(__dirname, 'data_stats.json'),
+    LOGS: path.join(__dirname, 'system.log')
 };
 
 const URLS = {
@@ -35,55 +45,131 @@ const URLS = {
 
 const CONFIG = {
     MAX_CACHE_SIZE: 5000,
-    TELEGRAM_POLL_TIMEOUT: 2, // Segundos para el long-polling
+    TELEGRAM_POLL_TIMEOUT: 2, 
     TIEMPO_MIN_REPOSO_MS: 180000, // 3 minutos
     TIEMPO_MAX_REPOSO_MS: 300000, // 5 minutos
     REINTENTOS_MAX: 3,
+    TIMEOUT_NAVEGACION: 45000,
     REGEX_DATOS: /(?:\d{15,16})[|/:-\s]+(?:\d{2})[|/:-\s]+(?:\d{2,4})[|/:-\s]+(?:\d{3,4})/g
 };
 
 // ====================================================================================================
-// 🛠️ CLASE UTILIDAD: LOGGER PROFESIONAL
+// 🛠️ MÓDULO 1: UTILIDADES Y TELEMETRÍA (CPU/RAM)
 // ====================================================================================================
-class Logger {
-    static info(msg) {
-        console.log(`\x1b[36m[INFO]\x1b[0m [${new Date().toLocaleTimeString()}] ${msg}`);
-    }
-    static success(msg) {
-        console.log(`\x1b[32m[ÉXITO]\x1b[0m [${new Date().toLocaleTimeString()}] ${msg}`);
-    }
-    static warn(msg) {
-        console.warn(`\x1b[33m[ALERTA]\x1b[0m [${new Date().toLocaleTimeString()}] ${msg}`);
-    }
-    static error(msg, err = '') {
-        console.error(`\x1b[31m[ERROR]\x1b[0m [${new Date().toLocaleTimeString()}] ${msg}`, err);
-    }
-    static debug(msg) {
-        if (process.env.DEBUG === 'true') {
-            console.log(`\x1b[90m[DEBUG]\x1b[0m [${new Date().toLocaleTimeString()}] ${msg}`);
-        }
-    }
-}
-
-// ====================================================================================================
-// 🛠️ CLASE UTILIDAD: FUNCIONES DE TIEMPO
-// ====================================================================================================
-class Utils {
+class SystemUtils {
+    /**
+     * Pausa la ejecución asíncrona.
+     * @param {number} ms - Milisegundos a esperar.
+     * @returns {Promise<void>}
+     */
     static esperar(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
-    
+
+    /**
+     * Genera un retardo aleatorio humano.
+     * @param {number} min 
+     * @param {number} max 
+     * @returns {number}
+     */
     static tiempoAleatorio(min, max) {
         return Math.floor(Math.random() * (max - min + 1) + min);
     }
-    
-    static generarIdUnico() {
-        return crypto.randomBytes(8).toString('hex');
+
+    /**
+     * Obtiene el uso actual de memoria RAM del proceso.
+     * @returns {string} Formato en MB
+     */
+    static getMemoryUsage() {
+        const used = process.memoryUsage().heapUsed / 1024 / 1024;
+        return `${Math.round(used * 100) / 100} MB`;
+    }
+
+    /**
+     * Calcula el tiempo de actividad (Uptime) del servidor.
+     * @returns {string} Formato d, h, m
+     */
+    static getSystemUptime() {
+        const uptime = os.uptime();
+        const dias = Math.floor(uptime / 86400);
+        const horas = Math.floor((uptime % 86400) / 3600);
+        const min = Math.floor((uptime % 3600) / 60);
+        return `${dias}d ${horas}h ${min}m`;
     }
 }
 
 // ====================================================================================================
-// 💾 MOTOR DE CACHÉ: ESCRITURA ATÓMICA Y SEGURA
+// 📝 MÓDULO 2: LOGGER EMPRESARIAL (CONSOLA + ARCHIVO)
+// ====================================================================================================
+class Logger {
+    static _escribirArchivo(nivel, msg) {
+        const timestamp = new Date().toISOString();
+        const logLine = `[${timestamp}] [${nivel}] ${msg}\n`;
+        fsSync.appendFile(PATHS.LOGS, logLine, (err) => { if (err) console.error("Error escribiendo log", err); });
+    }
+
+    static info(msg) { 
+        console.log(`\x1b[36m[INFO]\x1b[0m [${new Date().toLocaleTimeString()}] ${msg}`);
+        this._escribirArchivo('INFO', msg);
+    }
+    static success(msg) { 
+        console.log(`\x1b[32m[ÉXITO]\x1b[0m [${new Date().toLocaleTimeString()}] ${msg}`);
+        this._escribirArchivo('SUCCESS', msg);
+    }
+    static warn(msg) { 
+        console.warn(`\x1b[33m[ALERTA]\x1b[0m [${new Date().toLocaleTimeString()}] ${msg}`);
+        this._escribirArchivo('WARN', msg);
+    }
+    static error(msg, err = '') { 
+        console.error(`\x1b[31m[ERROR]\x1b[0m [${new Date().toLocaleTimeString()}] ${msg}`, err);
+        this._escribirArchivo('ERROR', `${msg} | Detalle: ${err}`);
+    }
+}
+
+// ====================================================================================================
+// 📊 MÓDULO 3: GESTOR DE ESTADÍSTICAS PERSISTENTES
+// ====================================================================================================
+class StatsManager {
+    constructor(filePath) {
+        this.filePath = filePath;
+        this.data = {
+            startTime: new Date().toISOString(),
+            ciclosCompletados: 0,
+            aportesEnviados: 0,
+            erroresDetectados: 0,
+            ultimoEscaneo: "Aún no ejecutado"
+        };
+    }
+
+    async init() {
+        try {
+            const file = await fs.readFile(this.filePath, 'utf-8');
+            const parsed = JSON.parse(file);
+            this.data = { ...this.data, ...parsed, startTime: new Date().toISOString() };
+        } catch (e) {
+            Logger.info("Creando nuevo archivo de estadísticas base.");
+            await this.save();
+        }
+    }
+
+    async save() {
+        try {
+            await fs.writeFile(this.filePath, JSON.stringify(this.data, null, 2), 'utf-8');
+        } catch (e) {
+            Logger.error("No se pudieron guardar las estadísticas", e.message);
+        }
+    }
+
+    async addCiclo() { this.data.ciclosCompletados++; await this.save(); }
+    async addAporte() { this.data.aportesEnviados++; await this.save(); }
+    async addError() { this.data.erroresDetectados++; await this.save(); }
+    async setUltimoEscaneo(timeStr) { this.data.ultimoEscaneo = timeStr; await this.save(); }
+    
+    getStats() { return this.data; }
+}
+
+// ====================================================================================================
+// 💾 MÓDULO 4: MOTOR DE CACHÉ ATÓMICO (ANTI-CORRUPCIÓN)
 // ====================================================================================================
 class CacheEngine {
     constructor(cachePath, tempPath, maxSize) {
@@ -91,7 +177,6 @@ class CacheEngine {
         this.tempPath = tempPath;
         this.maxSize = maxSize;
         this.memCache = new Set();
-        this.isReady = false;
     }
 
     async init() {
@@ -100,21 +185,16 @@ class CacheEngine {
             const parsed = JSON.parse(data);
             if (Array.isArray(parsed)) {
                 this.memCache = new Set(parsed);
-                Logger.info(`Motor de caché inicializado con ${this.memCache.size} registros.`);
+                Logger.info(`Motor de caché en línea. Registros en memoria: ${this.memCache.size}`);
             }
         } catch (error) {
-            if (error.code === 'ENOENT') {
-                Logger.warn('No se encontró archivo de caché previo. Iniciando base de datos en blanco.');
-            } else {
-                Logger.error('Error crítico al leer caché JSON. Reseteando...', error.message);
-            }
+            Logger.warn('Caché no encontrada o corrupta. Inicializando base de datos vacía.');
             this.memCache = new Set();
         }
-        this.isReady = true;
     }
 
-    has(key) {
-        return this.memCache.has(key);
+    has(key) { 
+        return this.memCache.has(key); 
     }
 
     async add(key) {
@@ -124,53 +204,54 @@ class CacheEngine {
         }
     }
 
-    getSize() {
-        return this.memCache.size;
+    getSize() { 
+        return this.memCache.size; 
+    }
+
+    async clear() {
+        this.memCache.clear();
+        await this._trimAndSave();
+        Logger.warn('Caché limpiada manualmente.');
     }
 
     async _trimAndSave() {
-        // Convertir a array para truncar si supera el tamaño máximo
         let cacheArray = Array.from(this.memCache);
+        // Recortar si excede el tamaño máximo manteniendo los más recientes (al final)
         if (cacheArray.length > this.maxSize) {
             cacheArray = cacheArray.slice(cacheArray.length - this.maxSize);
             this.memCache = new Set(cacheArray);
         }
-
-        // Escritura atómica: Escribe en temp y renombra (evita corrupción si se corta la luz/proceso)
         try {
+            // Escritura atómica para evitar JSON corruptos por caídas
             await fs.writeFile(this.tempPath, JSON.stringify(cacheArray, null, 2), 'utf-8');
             await fs.rename(this.tempPath, this.cachePath);
         } catch (error) {
-            Logger.error('Fallo al persistir la caché en disco.', error.message);
+            Logger.error('Fallo de I/O al persistir la caché', error.message);
         }
     }
 }
 
 // ====================================================================================================
-// 🤖 MÓDULO TELEGRAM: ENRUTADOR Y CONTROL DE UI ASÍNCRONO
+// 🤖 MÓDULO 5: ENRUTADOR TELEGRAM ASÍNCRONO Y MENÚ INTERACTIVO
 // ====================================================================================================
 class TelegramController {
-    constructor(token, targetChatId) {
+    constructor(token, targetChatId, stateObj, cacheEngine, statsEngine) {
         this.token = token;
         this.targetChatId = targetChatId;
         this.offset = 0;
         this.apiBase = `https://api.telegram.org/bot${this.token}`;
         
-        // Referencias al estado global administrado por el orquestador
-        this.state = null; 
-        this.cacheEngine = null;
-    }
-
-    bindState(stateObj, cacheEngine) {
-        this.state = stateObj;
-        this.cacheEngine = cacheEngine;
+        // Referencias a los motores centrales
+        this.state = stateObj; 
+        this.cache = cacheEngine;
+        this.stats = statsEngine;
     }
 
     async startPolling() {
-        Logger.info('Iniciando servicio de Long-Polling de Telegram (Enrutador Activo)...');
+        Logger.info('Arrancando Router Telegram (Long-Polling independiente)...');
         setInterval(async () => {
             await this._fetchUpdates();
-        }, 1500); // Polling rápido e independiente
+        }, 1200); 
     }
 
     async _fetchUpdates() {
@@ -187,36 +268,53 @@ class TelegramController {
                 }
             }
         } catch (error) {
-            Logger.debug(`Error silencioso en polling de Telegram: ${error.message}`);
+            // Ignorar timeouts normales de long-polling
         }
     }
 
     async _routeUpdate(update) {
-        // Enrutador de Mensajes de Texto
+        // ---------------------------------------------------------
+        // A. RUTEO DE COMANDOS DE TEXTO PLANO
+        // ---------------------------------------------------------
         if (update.message && update.message.text) {
             const chatId = update.message.chat.id;
             const textRaw = update.message.text.trim();
-            const cmd = textRaw.split('@')[0].toLowerCase(); // Soporte para grupos (/cmd@bot)
+            const textLower = textRaw.toLowerCase();
 
-            Logger.debug(`Comando recibido de [${chatId}]: ${cmd}`);
-
-            if (cmd === '/start' || cmd === '/menu') {
+            // Comando: Menú Principal
+            if (textLower.includes('/start') || textLower.includes('/menu') || textLower.includes('/estado')) {
                 await this.sendMenu(chatId);
-            } else if (cmd.startsWith('/paginas')) {
-                await this._handleCommandPaginas(chatId, textRaw);
-            } else if (cmd === '/estado') {
-                await this.sendMenu(chatId);
+            }
+            // Comando: Ayuda
+            else if (textLower.includes('/ayuda')) {
+                await this.sendHelp(chatId);
+            }
+            // Comando Libre: Configurar Rango (Regex avanzado soporta: /rango 1 10, /paginas 2-5)
+            else if (textLower.match(/^\/(?:rango|paginas|scan)\s+(\d+)[\s-]+(\d+)/)) {
+                const match = textLower.match(/^\/(?:rango|paginas|scan)\s+(\d+)[\s-]+(\d+)/);
+                const inicio = parseInt(match[1]);
+                const fin = parseInt(match[2]);
+                
+                if (inicio <= fin) {
+                    this.state.pageStart = inicio;
+                    this.state.pageEnd = fin;
+                    Logger.info(`Rango manual modificado vía chat: ${inicio} a ${fin}`);
+                    await this._sendRawMessage(chatId, `✅ <b>RANGO MANUAL APLICADO</b>\n\nEl sistema escaneará dinámicamente desde la <b>Página ${inicio}</b> hasta la <b>Página ${fin}</b> en el próximo ciclo.`);
+                    await this.sendMenu(chatId); 
+                } else {
+                    await this._sendRawMessage(chatId, `⚠️ <b>Error Lógico:</b> La página de inicio no puede ser mayor que la página final.`);
+                }
             }
         }
 
-        // Enrutador de Callbacks (Botones Inline)
+        // ---------------------------------------------------------
+        // B. RUTEO DE BOTONES INTERACTIVOS (CALLBACKS)
+        // ---------------------------------------------------------
         if (update.callback_query) {
             const chatId = update.callback_query.message.chat.id;
             const messageId = update.callback_query.message.message_id;
             const data = update.callback_query.data;
             const callbackId = update.callback_query.id;
-
-            Logger.debug(`Callback recibido: ${data}`);
 
             switch (data) {
                 case 'cmd_estado':
@@ -224,7 +322,7 @@ class TelegramController {
                     break;
                 case 'cmd_toggle_pausa':
                     this.state.isPaused = !this.state.isPaused;
-                    Logger.info(`Estado cambiado por usuario. Pausado: ${this.state.isPaused}`);
+                    Logger.warn(this.state.isPaused ? "🛑 SISTEMA PAUSADO MANUALMENTE" : "🟢 SISTEMA REANUDADO");
                     await this.updateMenu(chatId, messageId);
                     break;
                 case 'cmd_rango_1_5':
@@ -245,66 +343,47 @@ class TelegramController {
                 case 'cmd_close':
                     await this._deleteMessage(chatId, messageId);
                     break;
-                default:
-                    Logger.warn(`Callback no reconocido: ${data}`);
             }
 
-            // Responder al callback para quitar el estado de carga en el cliente
-            await axios.post(`${this.apiBase}/answerCallbackQuery`, {
-                callback_query_id: callbackId,
-                text: "⚡ Panel de control actualizado"
-            }).catch(() => {});
+            // Confirmar pulsación a Telegram
+            await axios.post(`${this.apiBase}/answerCallbackQuery`, { callback_query_id: callbackId, text: "⚡ Actualizado" }).catch(() => {});
         }
     }
 
-    async _handleCommandPaginas(chatId, textRaw) {
-        const partes = textRaw.split(' ');
-        if (partes[1] && partes[1].includes('-')) {
-            const [inicio, fin] = partes[1].split('-').map(Number);
-            if (!isNaN(inicio) && !isNaN(fin) && inicio <= fin) {
-                this.state.pageStart = inicio;
-                this.state.pageEnd = fin;
-                await this.sendMessage(chatId, `✅ <b>Configuración aplicada:</b>\nEl sistema escaneará dinámicamente desde la página <b>${inicio}</b> hasta la <b>${fin}</b>.`);
-            } else {
-                await this.sendMessage(chatId, `⚠️ Rango inválido. Asegúrate de que el primer número sea menor o igual al segundo.`);
-            }
-        } else {
-            await this.sendMessage(chatId, `ℹ️ <b>Uso correcto:</b>\nPara definir un rango personalizado escribe: <code>/paginas 1-15</code>`);
-        }
-    }
-
+    // Constructor de la Interfaz Visual (Dashboard)
     _buildMenuPayload(chatId, messageId = null) {
-        const estadoVisual = this.state.isPaused ? "🔴 SISTEMA PAUSADO" : "🟢 SISTEMA ACTIVO (24/7)";
+        const statsData = this.stats.getStats();
+        const estadoVisual = this.state.isPaused ? "🔴 PAUSADO (En reposo absoluto)" : "🟢 ACTIVO (Ejecución 24/7)";
         const botonPausa = this.state.isPaused ? "▶️ INICIAR SISTEMA" : "⏸️ PAUSAR SISTEMA";
-        const uptime = this.state.startTime.toLocaleString();
         
-        const texto = `🛡️ <b>CENTRAL DE MANDO YKZISWEB (V3.0)</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        const texto = `🛡️ <b>CENTRAL DE MANDO YKZISWEB (V5.0)</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
                       `⚙️ <b>Estado del Motor:</b> ${estadoVisual}\n` +
                       `📑 <b>Rango de Escaneo:</b> <code>Páginas ${this.state.pageStart} a ${this.state.pageEnd}</code>\n` +
-                      `📦 <b>Caché Anti-Duplicados:</b> <code>${this.cacheEngine.getSize()} / ${CONFIG.MAX_CACHE_SIZE}</code>\n` +
-                      `🔄 <b>Barridos Exitosos:</b> <code>${this.state.cyclesCompleted}</code>\n` +
-                      `📤 <b>Aportes Transmitidos:</b> <code>${this.state.totalSent}</code>\n` +
-                      `🕒 <b>Último Análisis:</b> <code>${this.state.lastScanTime}</code>\n` +
-                      `🚀 <b>Uptime desde:</b> <code>${uptime}</code>\n` +
+                      `📦 <b>Caché Anti-Duplicados:</b> <code>${this.cache.getSize()} / ${CONFIG.MAX_CACHE_SIZE}</code>\n` +
+                      `📊 <b>RAM en uso:</b> <code>${SystemUtils.getMemoryUsage()}</code>\n` +
+                      `🔄 <b>Barridos Exitosos:</b> <code>${statsData.ciclosCompletados}</code>\n` +
+                      `📤 <b>Aportes Transmitidos:</b> <code>${statsData.aportesEnviados}</code>\n` +
+                      `🕒 <b>Último Análisis:</b> <code>${statsData.ultimoEscaneo}</code>\n` +
+                      `🚀 <b>Uptime Global:</b> <code>${SystemUtils.getSystemUptime()}</code>\n` +
                       `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                      `<i>Selecciona una acción operativa:</i>`;
+                      `<i>💡 Tip: Establece un rango libre escribiendo: <b>/rango 5 25</b></i>`;
 
         const reply_markup = {
             inline_keyboard: [
                 [
                     { text: botonPausa, callback_data: "cmd_toggle_pausa" },
-                    { text: "🔄 Refrescar Monitor", callback_data: "cmd_estado" }
+                    { text: "🔄 Refrescar Panel", callback_data: "cmd_estado" }
                 ],
                 [
-                    { text: "📄 Rango [1 - 5]", callback_data: "cmd_rango_1_5" },
-                    { text: "📄 Rango [1 - 10]", callback_data: "cmd_rango_1_10" }
+                    { text: "📄 Rango Rápido [1 - 5]", callback_data: "cmd_rango_1_5" },
+                    { text: "📄 Rango Rápido [1 - 10]", callback_data: "cmd_rango_1_10" }
                 ],
                 [
-                    { text: "📄 Rango Máximo [1 - 20]", callback_data: "cmd_rango_1_20" }
+                    { text: "📄 Rango Rápido [1 - 20]", callback_data: "cmd_rango_1_20" }
                 ],
                 [
-                    { text: "📚 Manual de Usuario", callback_data: "cmd_ayuda" },
-                    { text: "❌ Cerrar Panel", callback_data: "cmd_close" }
+                    { text: "📚 Manual Técnico", callback_data: "cmd_ayuda" },
+                    { text: "❌ Ocultar", callback_data: "cmd_close" }
                 ]
             ]
         };
@@ -316,52 +395,67 @@ class TelegramController {
     }
 
     async sendMenu(chatId) {
-        const payload = this._buildMenuPayload(chatId);
-        await axios.post(`${this.apiBase}/sendMessage`, payload).catch(e => Logger.error('Error al enviar menú', e.message));
+        await axios.post(`${this.apiBase}/sendMessage`, this._buildMenuPayload(chatId)).catch(()=>{});
     }
 
     async updateMenu(chatId, messageId) {
-        const payload = this._buildMenuPayload(chatId, messageId);
-        await axios.post(`${this.apiBase}/editMessageText`, payload).catch(e => Logger.error('Error al actualizar menú', e.message));
+        await axios.post(`${this.apiBase}/editMessageText`, this._buildMenuPayload(chatId, messageId)).catch(()=>{});
     }
 
-    async sendHelp(chatId, messageId) {
-        const texto = `📚 <b>MANUAL DE OPERACIONES - YKZISWEB</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                      `🔹 <b>Pausar/Reanudar:</b> Permite detener temporalmente el motor de Puppeteer. La caché en memoria no se vacía.\n` +
-                      `🔹 <b>Rango Personalizado:</b> Determina la profundidad del barrido. Escribe <code>/paginas X-Y</code> para definir un rango que no esté en los botones.\n` +
-                      `🔹 <b>Manejo de Errores:</b> El bot reinicia automáticamente instancias corruptas del navegador.\n\n` +
-                      `<i>Nota: Solo administradores deben operar este panel.</i>`;
+    async sendHelp(chatId, messageId = null) {
+        const texto = `📚 <b>MANUAL DE OPERACIONES ENTERPRISE</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                      `🔹 <b>Freno Absoluto (Pausa):</b> Al pausar, el bot aborta cualquier envío que se haya quedado en cola. Bloqueo 100% seguro.\n` +
+                      `🔹 <b>Rango Manual:</b> Escribe en el chat <code>/rango 1 30</code> para definir límites no incluidos en los botones.\n` +
+                      `🔹 <b>Memoria Blindada:</b> El sistema memoriza ${CONFIG.MAX_CACHE_SIZE} hilos. Si reinicias el servidor, la caché se recupera del disco duro para no repetir nada.\n` +
+                      `🔹 <b>Monitoreo:</b> Mide uso de RAM, ciclos totales y uptime real.`;
                       
-        const reply_markup = {
-            inline_keyboard: [
-                [{ text: "🔙 Regresar al Panel Principal", callback_data: "cmd_estado" }]
-            ]
-        };
-
-        await axios.post(`${this.apiBase}/editMessageText`, {
-            chat_id: chatId, message_id: messageId, text: texto, parse_mode: 'HTML', reply_markup
-        }).catch(() => {});
+        const reply_markup = { inline_keyboard: [[{ text: "🔙 Regresar al Dashboard", callback_data: "cmd_estado" }]] };
+        const payload = { chat_id: chatId, text: texto, parse_mode: 'HTML', reply_markup };
+        
+        if (messageId) {
+            payload.message_id = messageId;
+            await axios.post(`${this.apiBase}/editMessageText`, payload).catch(() => {});
+        } else {
+            await axios.post(`${this.apiBase}/sendMessage`, payload).catch(() => {});
+        }
     }
 
-    async sendMessage(chatId, text, disablePreview = false) {
-        await axios.post(`${this.apiBase}/sendMessage`, {
-            chat_id: chatId,
-            text: text,
-            parse_mode: 'HTML',
-            disable_web_page_preview: disablePreview
-        }).catch(e => Logger.error(`Error enviando mensaje plano a ${chatId}`, e.message));
+    async _sendRawMessage(chatId, text) {
+        await axios.post(`${this.apiBase}/sendMessage`, { chat_id: chatId, text: text, parse_mode: 'HTML' }).catch(()=>{});
+    }
+
+    /**
+     * Envía los datos scrapeados al grupo principal.
+     * INCLUYE FRENO DE MANO: Valida si el bot está pausado justo antes de disparar la petición HTTP.
+     */
+    async sendScrapedData(text) {
+        if (this.state.isPaused) {
+            Logger.warn("🛑 Freno de Mano Activado: Se evitó el envío de un aporte porque el bot está en PAUSA.");
+            return false; 
+        }
+
+        try {
+            await axios.post(`${this.apiBase}/sendMessage`, {
+                chat_id: this.targetChatId,
+                text: text,
+                parse_mode: 'HTML',
+                disable_web_page_preview: true
+            });
+            return true;
+        } catch (e) {
+            Logger.error(`Error de API Telegram enviando aporte final`, e.message);
+            this.stats.addError();
+            return false;
+        }
     }
 
     async _deleteMessage(chatId, messageId) {
-        await axios.post(`${this.apiBase}/deleteMessage`, {
-            chat_id: chatId,
-            message_id: messageId
-        }).catch(() => {});
+        await axios.post(`${this.apiBase}/deleteMessage`, { chat_id: chatId, message_id: messageId }).catch(() => {});
     }
 }
 
 // ====================================================================================================
-// 🌐 NAVEGADOR STEALTH: GESTIÓN DE PUPPETEER Y EXTRACCIÓN
+// 🌐 MÓDULO 6: NAVEGADOR STEALTH (PUPPETEER ENGINE)
 // ====================================================================================================
 class BrowserEngine {
     constructor(username, password) {
@@ -371,17 +465,15 @@ class BrowserEngine {
     }
 
     async launch() {
-        Logger.info('Lanzando instancia de Chromium aislada (Stealth)...');
         this.browser = await puppeteer.launch({ 
-            headless: true, // Cambiar a false si se requiere depuración visual local
+            headless: true, 
             executablePath: '/usr/bin/chromium', 
             args: [
                 '--no-sandbox', 
                 '--disable-setuid-sandbox', 
-                '--disable-dev-shm-usage',
-                '--disable-accelerated-2d-canvas',
+                '--disable-dev-shm-usage', 
                 '--disable-gpu',
-                '--disable-blink-features=AutomationControlled', // Evasión extra
+                '--disable-blink-features=AutomationControlled',
                 '--window-size=1920,1080'
             ],
             ignoreHTTPSErrors: true
@@ -391,125 +483,94 @@ class BrowserEngine {
 
     async close() {
         if (this.browser) {
-            try {
-                await this.browser.close();
-                Logger.debug('Instancia de navegador cerrada exitosamente.');
-            } catch (e) {
-                Logger.warn('Excepción al forzar el cierre del navegador: ' + e.message);
-            }
+            try { await this.browser.close(); } catch (e) {}
         }
     }
 
     async applyOptimizations(page) {
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
         await page.setViewport({ width: 1920, height: 1080 });
         
-        // Interceptación de recursos para ahorrar RAM y Ancho de banda
         await page.setRequestInterception(true);
         page.on('request', (req) => {
-            const blockedTypes = ['image', 'stylesheet', 'font', 'media', 'ping', 'beacon'];
-            if (blockedTypes.includes(req.resourceType())) {
-                req.abort();
-            } else {
-                req.continue();
-            }
+            const blockedTypes = ['image', 'stylesheet', 'font', 'media', 'other'];
+            if (blockedTypes.includes(req.resourceType())) req.abort();
+            else req.continue();
         });
     }
 
     async authenticateAndRestoreSession(page) {
-        Logger.info("Validando persistencia de sesión...");
         try {
             const cookiesData = await fs.readFile(PATHS.COOKIES, 'utf-8');
             const cookiesArray = JSON.parse(cookiesData);
-            
             if (cookiesArray && cookiesArray.length > 0) {
                 await page.setCookie(...cookiesArray);
-                await page.goto('https://altenens.is/', { waitUntil: 'domcontentloaded', timeout: 45000 });
-                
-                // Buscar el avatar/link de usuario para confirmar sesión
-                const userElement = await page.$('.p-navgroup-link--user');
-                if (userElement) {
-                    Logger.success("¡Sesión restaurada desde disco! Evitando re-login.");
-                    return true;
-                }
+                await page.goto('https://altenens.is/', { waitUntil: 'domcontentloaded', timeout: CONFIG.TIMEOUT_NAVEGACION });
+                if (await page.$('.p-navgroup-link--user')) return true;
             }
-        } catch (err) {
-            Logger.debug('No existen cookies válidas. Procediendo con autenticación manual.');
-        }
+        } catch (err) {}
 
-        // Proceso de Login Manual con retrasos aleatorios (humanización)
-        Logger.warn('Cookies caducadas o inexistentes. Navegando al portal de autenticación...');
-        await page.goto(URLS.LOGIN, { waitUntil: 'domcontentloaded', timeout: 45000 });
+        Logger.warn("Cookies vencidas o no encontradas. Autenticando en Altenens...");
+        await page.goto(URLS.LOGIN, { waitUntil: 'domcontentloaded', timeout: CONFIG.TIMEOUT_NAVEGACION });
         await page.waitForSelector('input[name="login"]', { visible: true, timeout: 15000 });
         
-        await Utils.esperar(Utils.tiempoAleatorio(1200, 2500));
-        await page.type('input[name="login"]', this.username, { delay: Utils.tiempoAleatorio(50, 110) });
-        await Utils.esperar(Utils.tiempoAleatorio(800, 1500));
-        await page.type('input[name="password"]', this.password, { delay: Utils.tiempoAleatorio(50, 110) });
+        await SystemUtils.esperar(1500);
+        await page.type('input[name="login"]', this.username, { delay: SystemUtils.tiempoAleatorio(50, 90) });
+        await SystemUtils.esperar(1000);
+        await page.type('input[name="password"]', this.password, { delay: SystemUtils.tiempoAleatorio(50, 90) });
 
-        Logger.info("Despachando credenciales al servidor de Altenens...");
         await Promise.all([
             page.click('button.button--icon--login'),
             page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 })
         ]);
 
-        // Respaldo inmediato de la nueva sesión
         const newCookies = await page.cookies();
         await fs.writeFile(PATHS.COOKIES, JSON.stringify(newCookies, null, 2), 'utf-8');
-        Logger.success("Autenticación exitosa. Tokens de sesión guardados en bóveda.");
+        Logger.success("Login exitoso. Sesión salvada.");
         return true;
     }
 
     async extractThreadsFromPage(page, url) {
-        Logger.info(`Analizando cartelera objetivo: ${url}`);
         let intentos = 0;
-        
         while (intentos < CONFIG.REINTENTOS_MAX) {
             try {
-                await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
-                
-                // Verificar que el contenedor de hilos exista
+                await page.goto(url, { waitUntil: 'domcontentloaded', timeout: CONFIG.TIMEOUT_NAVEGACION });
                 const container = await page.waitForSelector('div.structItem-container, div.js-threadList', { visible: true, timeout: 10000 });
                 if (!container) return [];
 
-                // Evaluación en el contexto del navegador (Vanilla JS)
-                const hilos = await page.evaluate(() => {
+                return await page.evaluate(() => {
                     const items = document.querySelectorAll('div.structItem');
                     return Array.from(items).map(item => {
-                        const titleEl = item.querySelector('div.structItem-title a[data-tp-primary], a.p-title-value');
+                        const titleEl = item.querySelector('div.structItem-title a[data-tp-primary]');
                         const timeEl = item.querySelector('time.u-dt');
                         
                         let repliesCount = "0";
                         const metaCell = item.querySelector('div.structItem-cell.structItem-cell--meta');
                         if (metaCell) {
-                            const dls = metaCell.querySelectorAll('dl.pairs');
-                            dls.forEach(dl => {
+                            metaCell.querySelectorAll('dl.pairs').forEach(dl => {
                                 const dt = dl.querySelector('dt');
                                 const dd = dl.querySelector('dd');
-                                if (dt && dt.innerText.toLowerCase().includes('replies')) {
-                                    if (dd) repliesCount = dd.innerText.trim();
+                                if (dt && dt.innerText.toLowerCase().includes('replies') && dd) {
+                                    repliesCount = dd.innerText.trim();
                                 }
                             });
                         }
 
                         if (!titleEl || !titleEl.getAttribute('href')) return null;
-                        
                         const href = titleEl.getAttribute('href');
+                        
                         return {
                             titulo: titleEl.innerText.trim(),
                             link: href.startsWith('http') ? href : 'https://altenens.is' + href,
-                            hora: timeEl ? timeEl.innerText.trim() : "Recién publicado",
+                            hora: timeEl ? timeEl.innerText.trim() : "Reciente",
                             replies: repliesCount
                         };
-                    }).filter(Boolean); // Remover nulos
+                    }).filter(Boolean);
                 });
-
-                return hilos;
-
             } catch (error) {
                 intentos++;
-                Logger.warn(`Fallo al cargar página (Intento ${intentos}/${CONFIG.REINTENTOS_MAX}): ${error.message}`);
-                await Utils.esperar(3000 * intentos); // Backoff progresivo
+                Logger.warn(`Timeout leyendo cartelera. Reintento ${intentos}/${CONFIG.REINTENTOS_MAX}`);
+                await SystemUtils.esperar(3000 * intentos);
             }
         }
         return [];
@@ -517,54 +578,42 @@ class BrowserEngine {
 
     async extractPostContent(page, hiloUrl) {
         try {
-            await page.goto(hiloUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
-            
-            const content = await page.evaluate(() => {
-                // Priorizar el cuerpo del primer mensaje (el aporte original)
+            await page.goto(hiloUrl, { waitUntil: 'domcontentloaded', timeout: CONFIG.TIMEOUT_NAVEGACION });
+            return await page.evaluate(() => {
                 const body = document.querySelector('article.message-body div.bbWrapper');
                 return body ? body.innerText.trim() : "";
             });
-            
-            return content;
-        } catch (error) {
-            Logger.error(`Fallo al extraer contenido del hilo [${hiloUrl}]:`, error.message);
-            return null;
-        }
+        } catch (error) { return null; }
     }
 }
 
 // ====================================================================================================
-// 🧠 ORQUESTADOR PRINCIPAL (THE BRAIN)
+// 🧠 MÓDULO 7: ORQUESTADOR PRINCIPAL (THE CORE)
 // ====================================================================================================
-class ScraperApp {
+class OrchestratorApp {
     constructor() {
-        this.config = this._loadEnvVars();
+        this.config = this._loadEnvironmentVariables();
         
-        // Estado centralizado
+        // Estado Vivo
         this.state = {
             isPaused: false,
             pageStart: 1,
-            pageEnd: 3,
-            cyclesCompleted: 0,
-            totalSent: 0,
-            lastScanTime: "Aún no ejecutado",
-            startTime: new Date()
+            pageEnd: 3
         };
-
-        // Inyección de dependencias
-        this.cache = new CacheEngine(PATHS.CACHE, PATHS.TEMP_CACHE, CONFIG.MAX_CACHE_SIZE);
-        this.telegram = new TelegramController(this.config.BOT_TOKEN, this.config.FORWARD_TO);
-        this.telegram.bindState(this.state, this.cache);
         
-        this.browserEngine = new BrowserEngine(this.config.USER, this.config.PASS);
+        // Instanciación de dependencias core
+        this.stats = new StatsManager(PATHS.STATS);
+        this.cache = new CacheEngine(PATHS.CACHE, PATHS.TEMP_CACHE, CONFIG.MAX_CACHE_SIZE);
+        this.telegram = new TelegramController(this.config.BOT_TOKEN, this.config.FORWARD_TO, this.state, this.cache, this.stats);
+        this.browser = new BrowserEngine(this.config.USER, this.config.PASS);
     }
 
-    _loadEnvVars() {
-        const reqVars = ['FORUM_USER', 'FORUM_PASS', 'TELEGRAM_BOT_TOKEN', 'FORWARD_TO'];
+    _loadEnvironmentVariables() {
+        const requiredVars = ['FORUM_USER', 'FORUM_PASS', 'TELEGRAM_BOT_TOKEN', 'FORWARD_TO'];
         const config = {};
-        for (const v of reqVars) {
+        for (const v of requiredVars) {
             if (!process.env[v]) {
-                Logger.error(`Variable de entorno crítica faltante: ${v}. Revisa tu archivo .env.`);
+                console.error(`\x1b[31m[CRÍTICO]\x1b[0m Faltan credenciales .env: ${v}`);
                 process.exit(1);
             }
             config[v.replace('FORUM_', '').replace('TELEGRAM_', '')] = process.env[v];
@@ -573,142 +622,132 @@ class ScraperApp {
     }
 
     async boot() {
-        Logger.info("==================================================");
-        Logger.info("🚀 INICIANDO YKZISWEB ENTERPRISE SCRAPER V3.0");
-        Logger.info("==================================================");
+        Logger.info("=========================================================");
+        Logger.info("🚀 INICIANDO YKZISWEB ENTERPRISE V5.0");
+        Logger.info("=========================================================");
         
+        await this.stats.init();
         await this.cache.init();
-        await this.telegram.startPolling(); // Inicia el listener en un hilo separado
+        await this.telegram.startPolling(); 
         
-        // Iniciar el bucle de vida infinito
-        this._mainLoop();
+        // Entrar al loop infinito asíncrono
+        this._infiniteLoop();
     }
 
-    async _mainLoop() {
+    async _infiniteLoop() {
         while (true) {
             if (this.state.isPaused) {
-                Logger.debug("Motor pausado. Saltando ciclo de extracción...");
-                await Utils.esperar(10000);
-                continue;
+                await SystemUtils.esperar(5000);
+                continue; // Saltar todo procesamiento si está pausado
             }
 
-            Logger.info(`[CICLO #${this.state.cyclesCompleted + 1}] Iniciando barrido de páginas ${this.state.pageStart} a ${this.state.pageEnd}...`);
+            Logger.info(`[INICIANDO CICLO] Rango Objetivo: Páginas ${this.state.pageStart} a ${this.state.pageEnd}`);
             let pageContext = null;
 
             try {
-                // Iniciar Navegador y Sesión
-                await this.browserEngine.launch();
-                pageContext = await this.browserEngine.browser.newPage();
-                await this.browserEngine.applyOptimizations(pageContext);
+                await this.browser.launch();
+                pageContext = await this.browser.browser.newPage();
+                await this.browser.applyOptimizations(pageContext);
                 
-                const isAuthenticated = await this.browserEngine.authenticateAndRestoreSession(pageContext);
-                if (!isAuthenticated) throw new Error("Fallo crítico en el túnel de autenticación.");
+                const isAuthenticated = await this.browser.authenticateAndRestoreSession(pageContext);
+                if (!isAuthenticated) throw new Error("Túnel de autenticación fallido.");
 
-                // Fase 1: Recolección masiva de hilos en el rango configurado
+                // --- FASE 1: RECOLECCIÓN ---
                 let hilosTotalesBrutos = [];
                 for (let numPag = this.state.pageStart; numPag <= this.state.pageEnd; numPag++) {
-                    if (this.state.isPaused) break; // Salida de emergencia si el admin pausa
-
-                    const url = numPag === 1 ? URLS.TARGET_BASE : `${URLS.TARGET_BASE}page-${numPag}`;
-                    const hilosRecogidos = await this.browserEngine.extractThreadsFromPage(pageContext, url);
+                    if (this.state.isPaused) { Logger.warn("Ciclo abortado: Freno de mano aplicado durante paginación."); break; }
                     
-                    hilosTotalesBrutos.push(...hilosRecogidos);
-                    await Utils.esperar(Utils.tiempoAleatorio(1500, 2500)); // Delay entre páginas
+                    const url = numPag === 1 ? URLS.TARGET_BASE : `${URLS.TARGET_BASE}page-${numPag}`;
+                    Logger.info(`Mapeando URL: ${url}`);
+                    const hilosPagina = await this.browser.extractThreadsFromPage(pageContext, url);
+                    
+                    hilosTotalesBrutos.push(...hilosPagina);
+                    await SystemUtils.esperar(1500);
                 }
 
-                if (this.state.isPaused) {
-                    await this.browserEngine.close();
-                    continue;
-                }
+                if (this.state.isPaused) { await this.browser.close(); continue; }
 
-                // Fase 2: Filtrado y Deduplicación en Memoria (URLs únicas de esta pasada)
+                // --- FASE 2: FILTRADO EN MEMORIA ---
                 const mapUnicos = new Map();
                 for (const h of hilosTotalesBrutos) mapUnicos.set(h.link, h);
                 const hilosCandidatos = Array.from(mapUnicos.values());
                 
-                Logger.info(`Barrido completado. Hilos recolectados en esta pasada: ${hilosCandidatos.length}`);
+                Logger.info(`Hilos en bruto capturados: ${hilosCandidatos.length}`);
+                let aportesCiclo = 0;
 
-                // Fase 3: Inspección profunda y transmisión de aportes nuevos
-                let aportesEnviadosCiclo = 0;
-
+                // --- FASE 3: INSPECCIÓN PROFUNDA ---
                 for (const hilo of hilosCandidatos) {
-                    if (this.state.isPaused) break;
+                    if (this.state.isPaused) { Logger.warn("Ciclo abortado: Freno de mano aplicado durante lectura de hilos."); break; }
 
-                    // Validar contra la Caché Global de 5000 elementos
                     if (!this.cache.has(hilo.link)) {
-                        Logger.debug(`Inspeccionando nuevo hilo: "${hilo.titulo}"`);
-                        
                         let subPage = null;
                         try {
-                            subPage = await this.browserEngine.browser.newPage();
-                            await this.browserEngine.applyOptimizations(subPage);
+                            subPage = await this.browser.browser.newPage();
+                            await this.browser.applyOptimizations(subPage);
                             
-                            const contenidoBruto = await this.browserEngine.extractPostContent(subPage, hilo.link);
+                            const contenidoBruto = await this.browser.extractPostContent(subPage, hilo.link);
                             
+                            // Si justo pausaron mientras cargaba la subpágina, salir antes de procesar regex
+                            if (this.state.isPaused) { await subPage.close().catch(()=>null); break; }
+
                             if (contenidoBruto) {
-                                // Procesamiento Regex para tarjetas y bases
                                 const coincidencias = contenidoBruto.match(CONFIG.REGEX_DATOS);
                                 
                                 if (coincidencias && coincidencias.length > 0) {
-                                    // Formateo y limpieza de separadores basura
-                                    let contenidoLimpio = coincidencias.map(cc => {
-                                        return cc.replace(/[/:-\s]/g, '|').replace(/\|\|/g, '|');
-                                    }).join('\n');
-
+                                    let contenidoLimpio = coincidencias.map(cc => cc.replace(/[/:-\s]/g, '|').replace(/\|\|/g, '|')).join('\n');
                                     const badge = parseInt(hilo.replies) <= 2 ? " 🔥 [Fresco / Sin vistas]" : "";
                                     
-                                    // Bloque de mensaje Premium
-                                    const mensajeTelegram = `🕷️ <b>[ykzisweb]</b>${badge}\n\n` +
-                                                            `<code>${contenidoLimpio}</code>\n\n` +
-                                                            `🕒 <b>Fecha:</b> ${hilo.hora}\n` +
-                                                            `💬 <b>Replies:</b> ${hilo.replies}`;
+                                    const msgFinal = `🕷️ <b>[ykzisweb]</b>${badge}\n\n<code>${contenidoLimpio}</code>\n\n🕒 <b>Fecha:</b> ${hilo.hora}\n💬 <b>Replies:</b> ${hilo.replies}`;
 
-                                    // Retransmisión al canal/grupo
-                                    await this.telegram.sendMessage(this.config.FORWARD_TO, mensajeTelegram, true);
+                                    // El freno de mano final se aplica dentro de sendScrapedData
+                                    const exito = await this.telegram.sendScrapedData(msgFinal);
                                     
-                                    aportesEnviadosCiclo++;
-                                    this.state.totalSent++;
-                                    Logger.success(`¡Hit! Datos enviados al grupo principal. (Replies: ${hilo.replies})`);
-                                    
-                                    await Utils.esperar(Utils.tiempoAleatorio(3500, 5000));
+                                    if (exito) {
+                                        aportesCiclo++;
+                                        await this.stats.addAporte();
+                                        Logger.success(`Aporte exportado a Telegram. [Replies: ${hilo.replies}]`);
+                                        await SystemUtils.esperar(SystemUtils.tiempoAleatorio(3500, 5000));
+                                    }
                                 }
                             }
-
-                            // Commit inmediato a la caché (incluso si no tiene datos válidos, para no volver a entrar)
+                            
+                            // Commit a memoria
                             await this.cache.add(hilo.link);
 
-                        } catch (errSubPage) {
-                            Logger.warn(`Error procesando sub-página del hilo: ${errSubPage.message}`);
+                        } catch (err) {
+                            Logger.error(`Error leyendo hilo ${hilo.link}`, err.message);
                         } finally {
                             if (subPage) await subPage.close().catch(()=>null);
                         }
                     }
                 }
 
-                // Finalización del ciclo y actualización de estado
-                this.state.cyclesCompleted++;
-                this.state.lastScanTime = new Date().toLocaleTimeString();
-                Logger.info(`Ciclo #${this.state.cyclesCompleted} finalizado con éxito. Aportes generados: ${aportesEnviadosCiclo}.`);
+                if (!this.state.isPaused) {
+                    await this.stats.addCiclo();
+                    await this.stats.setUltimoEscaneo(new Date().toLocaleTimeString());
+                    Logger.info(`✅ Barrido completo finalizado. Nuevos hallazgos: ${aportesCiclo}`);
+                }
 
-            } catch (errFatal) {
-                Logger.error("Fallo crítico durante la ejecución del ciclo principal.", errFatal.stack);
+            } catch (errGeneral) {
+                Logger.error("Caída en el hilo de ejecución principal.", errGeneral.message);
+                await this.stats.addError();
             } finally {
-                await this.browserEngine.close();
+                await this.browser.close();
             }
 
-            // ========================================================================================
-            // ⏳ REPOSO INTELIGENTE (SLEEP)
-            // ========================================================================================
+            // --- FASE 4: REPOSO (SLEEP FRACCIONADO) ---
             if (!this.state.isPaused) {
-                const sleepMs = Utils.tiempoAleatorio(CONFIG.TIEMPO_MIN_REPOSO_MS, CONFIG.TIEMPO_MAX_REPOSO_MS);
-                const sleepMin = (sleepMs / 60000).toFixed(2);
-                Logger.info(`Entrando en fase de reposo preventivo por ${sleepMin} minutos para evadir bloqueos...`);
-                
-                // Sleep fraccionable: Si se pausa durante el sleep, cortamos la espera
+                const sleepMs = SystemUtils.tiempoAleatorio(CONFIG.TIEMPO_MIN_REPOSO_MS, CONFIG.TIEMPO_MAX_REPOSO_MS);
                 const tiempoFin = Date.now() + sleepMs;
+                Logger.info(`Fase de enfriamiento (Cool-down) de ${(sleepMs/60000).toFixed(2)} minutos...`);
+                
+                // Sleep que puede ser interrumpido si se aplica Pausa
                 while (Date.now() < tiempoFin) {
-                    if (this.state.isPaused) break; // Abortar sleep si el usuario pausa la máquina
-                    await Utils.esperar(2000); // Check cada 2s
+                    if (this.state.isPaused) {
+                        Logger.warn("Reposo cancelado por intervención manual (Pausa activada).");
+                        break; 
+                    }
+                    await SystemUtils.esperar(2000); 
                 }
             }
         }
@@ -716,24 +755,22 @@ class ScraperApp {
 }
 
 // ====================================================================================================
-// 🚀 INICIALIZACIÓN DEL SISTEMA Y GESTIÓN DE PROCESOS
+// 🚨 GESTIÓN DE PROCESOS (APAGADO SEGURO)
 // ====================================================================================================
-const orquestador = new ScraperApp();
+const masterApp = new OrchestratorApp();
 
-// Atrapar cierres bruscos (Ctrl+C, Render Restart, etc.) para apagar elegantemente
 process.on('SIGINT', async () => {
-    Logger.warn("\nSeñal SIGINT detectada. Apagando el sistema de forma segura...");
-    await orquestador.browserEngine.close();
-    process.exit(0);
-});
-process.on('SIGTERM', async () => {
-    Logger.warn("\nSeñal SIGTERM detectada. Apagando motores...");
-    await orquestador.browserEngine.close();
+    Logger.warn("Señal de interrupción recibida (SIGINT). Guardando estados...");
+    await masterApp.browser.close();
     process.exit(0);
 });
 
-// Arrancar motor
-orquestador.boot().catch(err => {
-    Logger.error("Error fatal en el arranque (Boot Sequence).", err.stack);
+process.on('uncaughtException', (err) => {
+    Logger.error("Excepción no capturada en Node.js", err.stack);
+});
+
+// Arrancar Sistema
+masterApp.boot().catch(err => {
+    console.error("Fallo crítico en el Boot Loader:", err);
     process.exit(1);
 });
